@@ -1,512 +1,168 @@
-#include "catch.hpp"
-#include "vdl/core/buffer.hpp"
-#include "vdl/core/memory.hpp"
-#include <string>
-#include <cstring>
+/**
+ * @file test_buffer.cpp
+ * @brief 测试缓冲区类
+ */
 
-TEST_CASE("CircularBuffer basic operations", "[buffer][circular]") {
-    SECTION("Create and write") {
-        vdl::CircularBuffer buf(256);
-        
-        uint8_t data[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-        size_t written = buf.write(data, 10);
-        
-        REQUIRE(written == 10);
-        REQUIRE(buf.getAvailableSize() == 10);
-        REQUIRE(buf.getRemainingCapacity() == 246);
-    }
+#include <catch.hpp>
+#include <vdl/core/buffer.hpp>
 
-    SECTION("Write and read") {
-        vdl::CircularBuffer buf(256);
-        
-        uint8_t data[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-        buf.write(data, 10);
-        
-        uint8_t read_data[10];
-        size_t read_size = buf.read(read_data, 10);
-        
-        REQUIRE(read_size == 10);
-        REQUIRE(buf.getAvailableSize() == 0);
-        REQUIRE(std::memcmp(data, read_data, 10) == 0);
-    }
+// ============================================================================
+// ring_buffer_t 基础测试
+// ============================================================================
 
-    SECTION("Buffer wrapping") {
-        vdl::CircularBuffer buf(10);
-        
-        // Fill buffer
-        uint8_t data1[8] = {1, 2, 3, 4, 5, 6, 7, 8};
-        buf.write(data1, 8);
-        
-        // Read 5 bytes
-        uint8_t read_data[5];
-        buf.read(read_data, 5);
-        
-        // Write 5 more bytes (should wrap)
-        uint8_t data2[5] = {9, 10, 11, 12, 13};
-        size_t written = buf.write(data2, 5);
-        
-        REQUIRE(written == 5);
-        REQUIRE(buf.getAvailableSize() == 8);
-    }
+TEST_CASE("ring_buffer_t construction", "[core][buffer]") {
+    vdl::ring_buffer_t buffer(1024);
 
-    SECTION("Peek without consuming") {
-        vdl::CircularBuffer buf(256);
-        
-        uint8_t data[5] = {1, 2, 3, 4, 5};
-        buf.write(data, 5);
-        
-        uint8_t peek_data[5];
-        size_t peeked = buf.peek(peek_data, 5);
-        
-        REQUIRE(peeked == 5);
-        REQUIRE(buf.getAvailableSize() == 5);  // Data still in buffer
-        REQUIRE(std::memcmp(data, peek_data, 5) == 0);
-    }
-
-    SECTION("Clear buffer") {
-        vdl::CircularBuffer buf(256);
-        
-        uint8_t data[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-        buf.write(data, 10);
-        
-        buf.clear();
-        
-        REQUIRE(buf.isEmpty());
-        REQUIRE(buf.getAvailableSize() == 0);
-        REQUIRE(buf.getRemainingCapacity() == 256);
-    }
-
-    SECTION("Skip bytes") {
-        vdl::CircularBuffer buf(256);
-        
-        uint8_t data[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-        buf.write(data, 10);
-        
-        buf.skip(3);
-        
-        REQUIRE(buf.getAvailableSize() == 7);
-        
-        uint8_t read_data[7];
-        buf.read(read_data, 7);
-        
-        REQUIRE(read_data[0] == 4);  // Should skip to 4th element
-    }
-
-    SECTION("Buffer full condition") {
-        vdl::CircularBuffer buf(10);
-        
-        uint8_t data[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-        buf.write(data, 10);
-        
-        REQUIRE(buf.isFull());
-        REQUIRE(buf.getRemainingCapacity() == 0);
-    }
-
-    SECTION("Partial write when full") {
-        vdl::CircularBuffer buf(10);
-        
-        uint8_t data1[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-        buf.write(data1, 10);
-        
-        uint8_t data2[5] = {11, 12, 13, 14, 15};
-        size_t written = buf.write(data2, 5);
-        
-        REQUIRE(written == 0);  // No space
-    }
+    REQUIRE(buffer.capacity() == 1024);
+    REQUIRE(buffer.size() == 0);
+    REQUIRE(buffer.available() == 1024);
+    REQUIRE(buffer.empty());
+    REQUIRE_FALSE(buffer.full());
 }
 
-TEST_CASE("CircularBuffer edge cases", "[buffer][circular-edge]") {
-    SECTION("Empty buffer read") {
-        vdl::CircularBuffer buf(256);
-        
-        uint8_t data[10];
-        size_t read = buf.read(data, 10);
-        
-        REQUIRE(read == 0);
-        REQUIRE(buf.isEmpty());
-    }
+TEST_CASE("ring_buffer_t write and read", "[core][buffer]") {
+    vdl::ring_buffer_t buffer(64);
 
-    SECTION("Multiple small writes") {
-        vdl::CircularBuffer buf(100);
-        
-        for (int i = 0; i < 10; ++i) {
-            uint8_t byte = static_cast<uint8_t>(i);
-            buf.write(&byte, 1);
-        }
-        
-        REQUIRE(buf.getAvailableSize() == 10);
-    }
+    vdl::byte_t data[] = {0xAA, 0xBB, 0xCC};
+    size_t written = buffer.write(data, 3);
 
-    SECTION("Interleaved write and read") {
-        vdl::CircularBuffer buf(10);
-        
-        // Write 3
-        uint8_t data1[3] = {1, 2, 3};
-        buf.write(data1, 3);
-        
-        // Read 1
-        uint8_t read1;
-        buf.read(&read1, 1);
-        REQUIRE(read1 == 1);
-        
-        // Write 3 more
-        uint8_t data2[3] = {4, 5, 6};
-        buf.write(data2, 3);
-        
-        // Read remaining: should have 2, 3, 4, 5, 6 (5 bytes)
-        uint8_t remaining[5];
-        size_t read_size = buf.read(remaining, 5);
-        REQUIRE(read_size == 5);
-        REQUIRE(remaining[0] == 2);
-        REQUIRE(remaining[1] == 3);
-        REQUIRE(remaining[2] == 4);
-        REQUIRE(remaining[3] == 5);
-        REQUIRE(remaining[4] == 6);
-    }
+    REQUIRE(written == 3);
+    REQUIRE(buffer.size() == 3);
+    REQUIRE(buffer.available() == 61);
 
-    SECTION("External buffer") {
-        uint8_t ext_buf[64];
-        vdl::CircularBuffer buf(ext_buf, 64);
-        
-        uint8_t data[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-        buf.write(data, 10);
-        
-        REQUIRE(buf.getAvailableSize() == 10);
-    }
+    vdl::byte_t out[3];
+    size_t read = buffer.read(out, 3);
+
+    REQUIRE(read == 3);
+    REQUIRE(out[0] == 0xAA);
+    REQUIRE(out[1] == 0xBB);
+    REQUIRE(out[2] == 0xCC);
+    REQUIRE(buffer.empty());
 }
 
-TEST_CASE("RingBuffer template operations", "[buffer][ring]") {
-    SECTION("Push and pop integers") {
-        vdl::RingBuffer<int> ring(10);
-        
-        REQUIRE(ring.push(42));
-        REQUIRE(ring.push(100));
-        REQUIRE(ring.size() == 2);
-        
-        int value;
-        REQUIRE(ring.pop(value));
-        REQUIRE(value == 42);
-        REQUIRE(ring.size() == 1);
-    }
+TEST_CASE("ring_buffer_t write with const_byte_span_t", "[core][buffer]") {
+    vdl::ring_buffer_t buffer(64);
 
-    SECTION("Front and back access") {
-        vdl::RingBuffer<int> ring(10);
-        
-        ring.push(10);
-        ring.push(20);
-        ring.push(30);
-        
-        int front, back;
-        REQUIRE(ring.front(front));
-        REQUIRE(ring.back(back));
-        
-        REQUIRE(front == 10);
-        REQUIRE(back == 30);
-    }
+    vdl::byte_t data[] = {0x01, 0x02, 0x03, 0x04, 0x05};
+    vdl::const_byte_span_t span(data, 5);
+    
+    size_t written = buffer.write(span);
 
-    SECTION("Index access") {
-        vdl::RingBuffer<int> ring(10);
-        
-        ring.push(100);
-        ring.push(200);
-        ring.push(300);
-        
-        int val0, val1, val2;
-        REQUIRE(ring.at(0, val0));
-        REQUIRE(ring.at(1, val1));
-        REQUIRE(ring.at(2, val2));
-        
-        REQUIRE(val0 == 100);
-        REQUIRE(val1 == 200);
-        REQUIRE(val2 == 300);
-    }
-
-    SECTION("Ring wrapping with pop") {
-        vdl::RingBuffer<int> ring(5);
-        
-        ring.push(1);
-        ring.push(2);
-        ring.push(3);
-        ring.push(4);
-        ring.push(5);
-        
-        int val;
-        ring.pop(val);  // Pop 1
-        ring.push(6);
-        
-        int at0;
-        REQUIRE(ring.at(0, at0));
-        REQUIRE(at0 == 2);
-    }
-
-    SECTION("Full buffer detection") {
-        vdl::RingBuffer<int> ring(3);
-        
-        REQUIRE(ring.push(1));
-        REQUIRE(ring.push(2));
-        REQUIRE(ring.push(3));
-        REQUIRE(!ring.push(4));  // Full
-        REQUIRE(ring.full());
-    }
-
-    SECTION("Clear buffer") {
-        vdl::RingBuffer<int> ring(10);
-        
-        ring.push(1);
-        ring.push(2);
-        ring.push(3);
-        
-        ring.clear();
-        
-        REQUIRE(ring.empty());
-        REQUIRE(ring.size() == 0);
-    }
-
-    SECTION("Ring buffer with strings") {
-        vdl::RingBuffer<std::string> ring(5);
-        
-        ring.push("hello");
-        ring.push("world");
-        
-        std::string val;
-        REQUIRE(ring.front(val));
-        REQUIRE(val == "hello");
-        
-        ring.pop(val);
-        REQUIRE(val == "hello");
-    }
+    REQUIRE(written == 5);
+    REQUIRE(buffer.size() == 5);
 }
 
-TEST_CASE("BufferPool management", "[buffer][pool]") {
-    SECTION("Acquire and release") {
-        vdl::BufferPool pool(256, 4);
-        
-        uint8_t* buf1 = pool.acquire();
-        uint8_t* buf2 = pool.acquire();
-        
-        REQUIRE(buf1 != nullptr);
-        REQUIRE(buf2 != nullptr);
-        REQUIRE(buf1 != buf2);
-        REQUIRE(pool.getAvailableCount() == 2);
-    }
+TEST_CASE("ring_buffer_t read with byte_span_t", "[core][buffer]") {
+    vdl::ring_buffer_t buffer(64);
 
-    SECTION("Pool exhaustion") {
-        vdl::BufferPool pool(256, 2);
-        
-        uint8_t* buf1 = pool.acquire();
-        uint8_t* buf2 = pool.acquire();
-        uint8_t* buf3 = pool.acquire();
-        
-        REQUIRE(buf1 != nullptr);
-        REQUIRE(buf2 != nullptr);
-        REQUIRE(buf3 == nullptr);  // No more buffers
-    }
+    vdl::byte_t data[] = {0x01, 0x02, 0x03};
+    buffer.write(data, 3);
 
-    SECTION("Buffer reuse") {
-        vdl::BufferPool pool(256, 2);
-        
-        uint8_t* buf1 = pool.acquire();
-        pool.release(buf1);
-        
-        uint8_t* buf2 = pool.acquire();
-        
-        REQUIRE(buf1 == buf2);  // Reused same buffer
-    }
+    vdl::byte_t out[3];
+    vdl::byte_span_t out_span(out, 3);
+    size_t read = buffer.read(out_span);
 
-    SECTION("Invalid release") {
-        vdl::BufferPool pool(256, 2);
-        
-        uint8_t dummy[256];
-        bool released = pool.release(dummy);
-        
-        REQUIRE(!released);  // Not in pool
-    }
-
-    SECTION("Pool reset") {
-        vdl::BufferPool pool(256, 2);
-        
-        uint8_t* buf1 = pool.acquire();
-        uint8_t* buf2 = pool.acquire();
-        (void)buf1;  // Avoid unused variable warning
-        (void)buf2;
-        
-        REQUIRE(pool.getAvailableCount() == 0);
-        
-        pool.reset();
-        
-        REQUIRE(pool.getAvailableCount() == 2);
-    }
-
-    SECTION("Pool size queries") {
-        vdl::BufferPool pool(512, 8);
-        
-        REQUIRE(pool.getBufferSize() == 512);
-        REQUIRE(pool.getTotalCount() == 8);
-        REQUIRE(pool.getAvailableCount() == 8);
-    }
+    REQUIRE(read == 3);
+    REQUIRE(out[0] == 0x01);
+    REQUIRE(out[1] == 0x02);
+    REQUIRE(out[2] == 0x03);
 }
 
-TEST_CASE("BufferGuard RAII protection", "[buffer][guard]") {
-    SECTION("Automatic release") {
-        vdl::BufferPool pool(256, 2);
-        
-        {
-            uint8_t* buf = pool.acquire();
-            vdl::BufferGuard guard(buf, &pool);
-            REQUIRE(guard.valid());
-            REQUIRE(pool.getAvailableCount() == 1);
-        }
-        
-        REQUIRE(pool.getAvailableCount() == 2);
-    }
+TEST_CASE("ring_buffer_t peek", "[core][buffer]") {
+    vdl::ring_buffer_t buffer(64);
 
-    SECTION("Guard release") {
-        vdl::BufferPool pool(256, 2);
-        
-        uint8_t* buf = pool.acquire();
-        vdl::BufferGuard guard(buf, &pool);
-        
-        uint8_t* released = guard.release();
-        REQUIRE(released == buf);
-        REQUIRE(!guard.valid());
-        
-        pool.release(buf);
-    }
+    vdl::byte_t data[] = {0x01, 0x02, 0x03};
+    buffer.write(data, 3);
 
-    SECTION("Null guard") {
-        vdl::BufferGuard guard(nullptr, nullptr);
-        REQUIRE(!guard.valid());
-    }
+    vdl::byte_t out[2];
+    size_t peeked = buffer.peek(out, 2);
+
+    REQUIRE(peeked == 2);
+    REQUIRE(out[0] == 0x01);
+    REQUIRE(out[1] == 0x02);
+    // peek 不移除数据
+    REQUIRE(buffer.size() == 3);
 }
 
-TEST_CASE("Buffer data preservation", "[buffer][data]") {
-    SECTION("Write/read string data") {
-        vdl::CircularBuffer buf(256);
-        
-        std::string original = "Hello, World!";
-        buf.write(original.c_str(), original.size());
-        
-        uint8_t read_buf[256];
-        buf.read(read_buf, original.size());
-        
-        std::string result(reinterpret_cast<char*>(read_buf), original.size());
-        REQUIRE(result == original);
-    }
+TEST_CASE("ring_buffer_t skip", "[core][buffer]") {
+    vdl::ring_buffer_t buffer(64);
 
-    SECTION("Multiple writes and reads") {
-        vdl::CircularBuffer buf(1024);
-        
-        for (int i = 0; i < 10; ++i) {
-            uint8_t data[32];
-            for (int j = 0; j < 32; ++j) {
-                data[j] = static_cast<uint8_t>((i * 32 + j) % 256);
-            }
-            buf.write(data, 32);
-        }
-        
-        REQUIRE(buf.getAvailableSize() == 320);
-        
-        for (int i = 0; i < 10; ++i) {
-            uint8_t read_buf[32];
-            buf.read(read_buf, 32);
-            
-            for (int j = 0; j < 32; ++j) {
-                REQUIRE(read_buf[j] == static_cast<uint8_t>((i * 32 + j) % 256));
-            }
-        }
-    }
+    vdl::byte_t data[] = {0x01, 0x02, 0x03, 0x04, 0x05};
+    buffer.write(data, 5);
+
+    size_t skipped = buffer.skip(2);
+    REQUIRE(skipped == 2);
+    REQUIRE(buffer.size() == 3);
+
+    vdl::byte_t out[3];
+    buffer.read(out, 3);
+    REQUIRE(out[0] == 0x03);
+    REQUIRE(out[1] == 0x04);
+    REQUIRE(out[2] == 0x05);
 }
 
-TEST_CASE("Buffer integration tests", "[buffer][integration]") {
-    SECTION("Circular buffer with memory allocator") {
-        vdl::MemoryManager::resetToStandardAllocator();
-        vdl::MemoryManager::resetStats();
-        
-        vdl::CircularBuffer buf(512);
-        
-        uint8_t data[256];
-        for (int i = 0; i < 256; ++i) {
-            data[i] = static_cast<uint8_t>(i % 256);
-        }
-        
-        buf.write(data, 256);
-        uint8_t read_buf[256];
-        buf.read(read_buf, 256);
-        
-        REQUIRE(std::memcmp(data, read_buf, 256) == 0);
-    }
+TEST_CASE("ring_buffer_t clear", "[core][buffer]") {
+    vdl::ring_buffer_t buffer(64);
 
-    SECTION("Ring buffer with complex data types") {
-        struct Point {
-            int x, y;
-            Point(int x = 0, int y = 0) : x(x), y(y) {}
-            bool operator==(const Point& other) const {
-                return x == other.x && y == other.y;
-            }
-        };
-        
-        vdl::RingBuffer<Point> ring(10);
-        
-        ring.push(Point(1, 2));
-        ring.push(Point(3, 4));
-        ring.push(Point(5, 6));
-        
-        Point p;
-        ring.front(p);
-        REQUIRE(p == Point(1, 2));
-        
-        ring.pop(p);
-        REQUIRE(p == Point(1, 2));
-    }
+    vdl::byte_t data[] = {0x01, 0x02, 0x03};
+    buffer.write(data, 3);
+    REQUIRE(buffer.size() == 3);
 
-    SECTION("Buffer pool with custom allocator") {
-        vdl::MemoryPool mem_pool(1024, 5);
-        
-        vdl::BufferPool buf_pool(256, 3, &mem_pool);
-        
-        uint8_t* buf1 = buf_pool.acquire();
-        REQUIRE(buf1 != nullptr);
-        
-        buf_pool.release(buf1);
-        REQUIRE(buf_pool.getAvailableCount() == 3);
-    }
+    buffer.clear();
+    REQUIRE(buffer.size() == 0);
+    REQUIRE(buffer.empty());
+    REQUIRE(buffer.available() == 64);
 }
 
-TEST_CASE("Buffer stress tests", "[buffer][stress]") {
-    SECTION("Large sequential writes") {
-        vdl::CircularBuffer buf(4096);
-        
-        uint8_t data[100];
-        for (int i = 0; i < 100; ++i) {
-            data[i] = static_cast<uint8_t>(i % 256);
-        }
-        
-        buf.write(data, 100);
-        REQUIRE(buf.getAvailableSize() == 100);
-    }
+TEST_CASE("ring_buffer_t wraparound", "[core][buffer]") {
+    vdl::ring_buffer_t buffer(8);
 
-    SECTION("Ring buffer capacity limits") {
-        vdl::RingBuffer<int> ring(100);
-        
-        for (int i = 0; i < 100; ++i) {
-            REQUIRE(ring.push(i));
-        }
-        
-        REQUIRE(ring.full());
-        REQUIRE(!ring.push(100));
-    }
+    // 写满
+    vdl::byte_t data1[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    size_t written = buffer.write(data1, 8);
+    REQUIRE(written == 8);
+    REQUIRE(buffer.full());
 
-    SECTION("Peek performance") {
-        vdl::CircularBuffer buf(10000);
-        
-        uint8_t data[1000];
-        std::memset(data, 0, 1000);  // Initialize buffer
-        buf.write(data, 1000);
-        
-        uint8_t peek_buf[1000];
-        size_t peeked = buf.peek(peek_buf, 1000);
-        
-        REQUIRE(peeked == 1000);
-        REQUIRE(buf.getAvailableSize() == 1000);  // Data unchanged
-    }
+    // 读取部分
+    vdl::byte_t out[4];
+    buffer.read(out, 4);
+    REQUIRE(buffer.size() == 4);
+
+    // 再写入（会跨越边界）
+    vdl::byte_t data2[] = {0xAA, 0xBB, 0xCC, 0xDD};
+    written = buffer.write(data2, 4);
+    REQUIRE(written == 4);
+    REQUIRE(buffer.full());
+
+    // 读取全部验证
+    vdl::byte_t result[8];
+    size_t read = buffer.read(result, 8);
+    REQUIRE(read == 8);
+    REQUIRE(result[0] == 0x05);
+    REQUIRE(result[1] == 0x06);
+    REQUIRE(result[2] == 0x07);
+    REQUIRE(result[3] == 0x08);
+    REQUIRE(result[4] == 0xAA);
+    REQUIRE(result[5] == 0xBB);
+    REQUIRE(result[6] == 0xCC);
+    REQUIRE(result[7] == 0xDD);
+}
+
+TEST_CASE("ring_buffer_t partial write when full", "[core][buffer]") {
+    vdl::ring_buffer_t buffer(4);
+
+    vdl::byte_t data[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+    size_t written = buffer.write(data, 6);
+
+    // 只能写入 4 字节
+    REQUIRE(written == 4);
+    REQUIRE(buffer.full());
+}
+
+TEST_CASE("ring_buffer_t null pointer handling", "[core][buffer]") {
+    vdl::ring_buffer_t buffer(64);
+
+    REQUIRE(buffer.write(nullptr, 10) == 0);
+    REQUIRE(buffer.read(nullptr, 10) == 0);
+    REQUIRE(buffer.peek(nullptr, 10) == 0);
 }

@@ -1,470 +1,252 @@
-#ifndef VDL_MEMORY_HPP
-#define VDL_MEMORY_HPP
+/**
+ * @file memory.hpp
+ * @brief 内存管理工具
+ * 
+ * 提供内存池和智能指针相关工具。
+ */
 
-#include "error.hpp"
+#ifndef VDL_CORE_MEMORY_HPP
+#define VDL_CORE_MEMORY_HPP
+
 #include "compat.hpp"
-#include <cstdint>
-#include <cstddef>
-#include <new>
+#include "noncopyable.hpp"
+#include "types.hpp"
+
+#include <memory>
 #include <vector>
-#include <map>
-#include <algorithm>
-#include <atomic>
+#include <cstring>
 
 namespace vdl {
 
-/**
- * @brief Memory allocation statistics
- */
-struct MemoryStats {
-    uint64_t total_allocated;    ///< Total allocated bytes
-    uint64_t total_deallocated;  ///< Total deallocated bytes
-    uint64_t current_allocated;  ///< Current allocated bytes
-    uint64_t peak_allocated;     ///< Peak allocated bytes
-    uint64_t allocation_count;   ///< Number of allocations
-    uint64_t deallocation_count; ///< Number of deallocations
-
-    MemoryStats()
-        : total_allocated(0), total_deallocated(0), current_allocated(0),
-          peak_allocated(0), allocation_count(0), deallocation_count(0) {}
-
-    void reset() {
-        total_allocated = 0;
-        total_deallocated = 0;
-        current_allocated = 0;
-        peak_allocated = 0;
-        allocation_count = 0;
-        deallocation_count = 0;
-    }
-};
+// ============================================================================
+// buffer_pool_t - 缓冲区池
+// ============================================================================
 
 /**
- * @brief Base allocator interface
+ * @brief 缓冲区池，用于复用缓冲区减少内存分配
+ * 
+ * @code
+ * buffer_pool_t pool(1024);  // 每个缓冲区 1024 字节
+ * 
+ * auto buf = pool.acquire();
+ * // ... 使用 buf ...
+ * pool.release(std::move(buf));
+ * @endcode
  */
-class Allocator {
+class buffer_pool_t : private noncopyable_t {
 public:
-    virtual ~Allocator() = default;
+    /**
+     * @brief 构造函数
+     * @param buffer_size 每个缓冲区的大小
+     * @param initial_count 初始缓冲区数量
+     */
+    explicit buffer_pool_t(size_t buffer_size, size_t initial_count = 4)
+        : m_buffer_size(buffer_size) {
+        for (size_t i = 0; i < initial_count; ++i) {
+            m_pool.push_back(bytes_t(buffer_size));
+        }
+    }
 
     /**
-     * @brief Allocate memory
-     * @param size Number of bytes to allocate
-     * @return Pointer to allocated memory
+     * @brief 获取一个缓冲区
+     * @return 缓冲区
      */
-    virtual void* allocate(size_t size) = 0;
+    bytes_t acquire() {
+        if (!m_pool.empty()) {
+            bytes_t buf = std::move(m_pool.back());
+            m_pool.pop_back();
+            return buf;
+        }
+        return bytes_t(m_buffer_size);
+    }
 
     /**
-     * @brief Deallocate memory
-     * @param ptr Pointer to memory to deallocate
+     * @brief 归还缓冲区
+     * @param buf 要归还的缓冲区
      */
-    virtual void deallocate(void* ptr) = 0;
+    void release(bytes_t buf) {
+        if (buf.size() == m_buffer_size && m_pool.size() < m_max_pool_size) {
+            m_pool.push_back(std::move(buf));
+        }
+    }
 
     /**
-     * @brief Get memory statistics
-     * @return Current memory statistics
+     * @brief 获取缓冲区大小
      */
-    virtual MemoryStats getStats() const = 0;
+    size_t buffer_size() const {
+        return m_buffer_size;
+    }
 
     /**
-     * @brief Reset statistics
+     * @brief 获取池中缓冲区数量
      */
-    virtual void resetStats() = 0;
-};
+    size_t pool_size() const {
+        return m_pool.size();
+    }
 
-/**
- * @brief Standard allocator using new/delete
- */
-class StandardAllocator : public Allocator {
+    /**
+     * @brief 设置最大池大小
+     */
+    void set_max_pool_size(size_t max_size) {
+        m_max_pool_size = max_size;
+    }
+
+    /**
+     * @brief 清空池
+     */
+    void clear() {
+        m_pool.clear();
+    }
+
 private:
-    mutable MemoryStats stats_;
-
-public:
-    StandardAllocator() : stats_() {}
-
-    void* allocate(size_t size) override {
-        VDL_CHECK(size > 0, vdl::ErrorCode::Invalid, "allocation size must be > 0");
-        void* ptr = new char[size];
-        VDL_CHECK_NOT_NULL(ptr, "allocation failed");
-        
-        stats_.total_allocated += size;
-        stats_.current_allocated += size;
-        stats_.allocation_count++;
-        if (stats_.current_allocated > stats_.peak_allocated) {
-            stats_.peak_allocated = stats_.current_allocated;
-        }
-        return ptr;
-    }
-
-    void deallocate(void* ptr) override {
-        if (ptr != nullptr) {
-            // Note: We can't track deallocation size in standard allocator
-            // This is a limitation of C++ new/delete without custom overhead
-            stats_.total_deallocated += 0;  // Would need size tracking
-            stats_.deallocation_count++;
-        }
-    }
-
-    MemoryStats getStats() const override {
-        return stats_;
-    }
-
-    void resetStats() override {
-        stats_.reset();
-    }
+    size_t m_buffer_size;
+    size_t m_max_pool_size = 64;
+    std::vector<bytes_t> m_pool;
 };
 
+// ============================================================================
+// pooled_buffer_t - 自动归还的缓冲区
+// ============================================================================
+
 /**
- * @brief Stack allocator for linear allocation patterns
+ * @brief 自动归还的缓冲区，析构时自动归还到池
  */
-class StackAllocator : public Allocator {
+class pooled_buffer_t : private noncopyable_t {
+public:
+    /**
+     * @brief 构造函数
+     */
+    pooled_buffer_t(buffer_pool_t& pool, bytes_t buf)
+        : m_pool(&pool)
+        , m_buffer(std::move(buf)) {
+    }
+
+    /**
+     * @brief 移动构造函数
+     */
+    pooled_buffer_t(pooled_buffer_t&& other)
+        : m_pool(other.m_pool)
+        , m_buffer(std::move(other.m_buffer)) {
+        other.m_pool = nullptr;
+    }
+
+    /**
+     * @brief 移动赋值
+     */
+    pooled_buffer_t& operator=(pooled_buffer_t&& other) {
+        if (this != &other) {
+            _release();
+            m_pool = other.m_pool;
+            m_buffer = std::move(other.m_buffer);
+            other.m_pool = nullptr;
+        }
+        return *this;
+    }
+
+    /**
+     * @brief 析构函数，自动归还缓冲区
+     */
+    ~pooled_buffer_t() {
+        _release();
+    }
+
+    /**
+     * @brief 获取数据指针
+     */
+    byte_t* data() {
+        return m_buffer.data();
+    }
+
+    const byte_t* data() const {
+        return m_buffer.data();
+    }
+
+    /**
+     * @brief 获取大小
+     */
+    size_t size() const {
+        return m_buffer.size();
+    }
+
+    /**
+     * @brief 获取span视图
+     */
+    byte_span_t span() {
+        return make_span(m_buffer);
+    }
+
+    const_byte_span_t span() const {
+        return make_span(m_buffer);
+    }
+
+    /**
+     * @brief 释放缓冲区（不归还到池）
+     */
+    bytes_t release() {
+        m_pool = nullptr;
+        return std::move(m_buffer);
+    }
+
 private:
-    char* buffer_;
-    size_t capacity_;
-    size_t offset_;
-    MemoryStats stats_;
-    bool owns_memory_;
-
-public:
-    /**
-     * @brief Construct with external buffer
-     */
-    StackAllocator(void* buffer, size_t capacity)
-        : buffer_(static_cast<char*>(buffer)), capacity_(capacity),
-          offset_(0), stats_(), owns_memory_(false) {
-        VDL_CHECK_NOT_NULL(buffer, "buffer cannot be null");
-        VDL_CHECK(capacity > 0, vdl::ErrorCode::Invalid, "capacity must be > 0");
-    }
-
-    /**
-     * @brief Construct with internal buffer
-     */
-    explicit StackAllocator(size_t capacity)
-        : buffer_(nullptr), capacity_(capacity), offset_(0), stats_(),
-          owns_memory_(true) {
-        VDL_CHECK(capacity > 0, vdl::ErrorCode::Invalid, "capacity must be > 0");
-        buffer_ = new char[capacity];
-        VDL_CHECK_NOT_NULL(buffer_, "failed to allocate internal buffer");
-    }
-
-    ~StackAllocator() {
-        if (owns_memory_) {
-            delete[] buffer_;
+    void _release() {
+        if (m_pool && !m_buffer.empty()) {
+            m_pool->release(std::move(m_buffer));
         }
     }
 
-    void* allocate(size_t size) override {
-        VDL_CHECK(size > 0, vdl::ErrorCode::Invalid, "allocation size must be > 0");
-        
-        if (offset_ + size > capacity_) {
-            VDL_THROW(vdl::ErrorCode::OutOfMemory, "stack allocator exhausted");
-        }
-
-        void* ptr = buffer_ + offset_;
-        offset_ += size;
-
-        stats_.total_allocated += size;
-        stats_.current_allocated += size;
-        stats_.allocation_count++;
-        if (stats_.current_allocated > stats_.peak_allocated) {
-            stats_.peak_allocated = stats_.current_allocated;
-        }
-
-        return ptr;
-    }
-
-    void deallocate(void* ptr) override {
-        // Stack allocator doesn't support individual deallocation
-        // Only reset() clears all allocations
-        if (ptr != nullptr) {
-            stats_.deallocation_count++;
-        }
-    }
-
-    /**
-     * @brief Reset all allocations
-     */
-    void reset() {
-        offset_ = 0;
-        stats_.current_allocated = 0;
-        stats_.allocation_count = 0;
-    }
-
-    MemoryStats getStats() const override {
-        return stats_;
-    }
-
-    void resetStats() override {
-        stats_.reset();
-    }
-
-    /**
-     * @brief Get current usage
-     */
-    size_t getUsage() const {
-        return offset_;
-    }
-
-    /**
-     * @brief Get remaining capacity
-     */
-    size_t getRemaining() const {
-        return capacity_ - offset_;
-    }
+    buffer_pool_t* m_pool;
+    bytes_t m_buffer;
 };
 
 /**
- * @brief Memory pool for fixed-size allocations
+ * @brief 从池中获取自动归还的缓冲区
  */
-class MemoryPool : public Allocator {
-private:
-    struct Block {
-        void* ptr;
-        bool allocated;
-    };
+inline pooled_buffer_t acquire_buffer(buffer_pool_t& pool) {
+    return pooled_buffer_t(pool, pool.acquire());
+}
 
-    std::vector<Block> blocks_;
-    size_t block_size_;
-    char* memory_;
-    size_t total_blocks_;
-    MemoryStats stats_;
-    bool owns_memory_;
-
-public:
-    /**
-     * @brief Construct with specified block size and count
-     */
-    MemoryPool(size_t block_size, size_t block_count)
-        : block_size_(block_size), memory_(nullptr), total_blocks_(block_count),
-          stats_(), owns_memory_(true) {
-        VDL_CHECK(block_size > 0, vdl::ErrorCode::Invalid, "block size must be > 0");
-        VDL_CHECK(block_count > 0, vdl::ErrorCode::Invalid, "block count must be > 0");
-
-        size_t total_size = block_size * block_count;
-        memory_ = new char[total_size];
-        VDL_CHECK_NOT_NULL(memory_, "failed to allocate pool memory");
-
-        blocks_.reserve(block_count);
-        for (size_t i = 0; i < block_count; ++i) {
-            Block block;
-            block.ptr = memory_ + (i * block_size);
-            block.allocated = false;
-            blocks_.push_back(block);
-        }
-    }
-
-    ~MemoryPool() {
-        if (owns_memory_ && memory_ != nullptr) {
-            delete[] memory_;
-        }
-    }
-
-    /**
-     * @brief Allocate a fixed-size block of memory
-     * 
-     * MemoryPool manages fixed-size blocks. The size parameter specifies the
-     * minimum size needed; if it exceeds block_size_, the allocation fails.
-     * Statistics track the actual allocated size (block_size_), not the
-     * requested size.
-     * 
-     * @param size Requested size in bytes (must be <= block_size_)
-     * @return Pointer to the allocated block
-     * @throw VdlException if size > block_size_ or pool is exhausted
-     */
-    void* allocate(size_t size) override {
-        VDL_CHECK(size > 0, vdl::ErrorCode::Invalid, "allocation size must be > 0");
-        VDL_CHECK(size <= block_size_, vdl::ErrorCode::Invalid,
-                  "requested size exceeds block size");
-
-        for (auto& block : blocks_) {
-            if (!block.allocated) {
-                block.allocated = true;
-                // Statistics track actual allocated block_size_, not requested size
-                stats_.total_allocated += block_size_;
-                stats_.current_allocated += block_size_;
-                stats_.allocation_count++;
-                if (stats_.current_allocated > stats_.peak_allocated) {
-                    stats_.peak_allocated = stats_.current_allocated;
-                }
-                return block.ptr;
-            }
-        }
-
-        VDL_THROW(vdl::ErrorCode::OutOfMemory, "memory pool exhausted");
-    }
-
-    void deallocate(void* ptr) override {
-        if (ptr == nullptr) {
-            return;
-        }
-
-        for (auto& block : blocks_) {
-            if (block.ptr == ptr && block.allocated) {
-                block.allocated = false;
-                stats_.total_deallocated += block_size_;
-                stats_.current_allocated -= block_size_;
-                stats_.deallocation_count++;
-                return;
-            }
-        }
-
-        VDL_THROW(vdl::ErrorCode::Invalid, "pointer not in this pool");
-    }
-
-    MemoryStats getStats() const override {
-        return stats_;
-    }
-
-    void resetStats() override {
-        stats_.reset();
-    }
-
-    /**
-     * @brief Get number of free blocks
-     */
-    size_t getFreeBlocks() const {
-        size_t free = 0;
-        for (const auto& block : blocks_) {
-            if (!block.allocated) {
-                ++free;
-            }
-        }
-        return free;
-    }
-
-    /**
-     * @brief Get total number of blocks
-     */
-    size_t getTotalBlocks() const {
-        return total_blocks_;
-    }
-
-    /**
-     * @brief Get block size
-     */
-    size_t getBlockSize() const {
-        return block_size_;
-    }
-};
+// ============================================================================
+// 内存操作工具
+// ============================================================================
 
 /**
- * @brief Global memory manager
+ * @brief 安全内存复制
+ * @param dest 目标
+ * @param src 源
+ * @param count 字节数
  */
-class MemoryManager {
-public:
-    static Allocator* default_allocator_;
-    static StandardAllocator standard_allocator_;
-
-    /**
-     * @brief Set default allocator
-     */
-    static void setDefaultAllocator(Allocator* allocator) {
-        if (allocator != nullptr) {
-            default_allocator_ = allocator;
-        } else {
-            default_allocator_ = &standard_allocator_;
-        }
+inline void mem_copy(void* dest, const void* src, size_t count) {
+    if (dest && src && count > 0) {
+        std::memcpy(dest, src, count);
     }
-
-    /**
-     * @brief Get default allocator
-     */
-    static Allocator* getDefaultAllocator() {
-        return default_allocator_;
-    }
-
-    /**
-     * @brief Reset to standard allocator
-     */
-    static void resetToStandardAllocator() {
-        default_allocator_ = &standard_allocator_;
-    }
-
-    /**
-     * @brief Allocate memory using default allocator
-     */
-    static void* allocate(size_t size) {
-        return default_allocator_->allocate(size);
-    }
-
-    /**
-     * @brief Deallocate memory using default allocator
-     */
-    static void deallocate(void* ptr) {
-        default_allocator_->deallocate(ptr);
-    }
-
-    /**
-     * @brief Get memory statistics
-     */
-    static MemoryStats getStats() {
-        return default_allocator_->getStats();
-    }
-
-    /**
-     * @brief Reset statistics
-     */
-    static void resetStats() {
-        default_allocator_->resetStats();
-    }
-};
+}
 
 /**
- * @brief RAII memory guard for exception safety
+ * @brief 安全内存设置
  */
-class MemoryGuard {
-private:
-    void* ptr_;
-    Allocator* allocator_;
-
-public:
-    MemoryGuard(void* ptr, Allocator* allocator)
-        : ptr_(ptr), allocator_(allocator) {
-        if (allocator_ == nullptr) {
-            allocator_ = MemoryManager::getDefaultAllocator();
-        }
+inline void mem_set(void* dest, int value, size_t count) {
+    if (dest && count > 0) {
+        std::memset(dest, value, count);
     }
-
-    ~MemoryGuard() {
-        if (ptr_ != nullptr && allocator_ != nullptr) {
-            allocator_->deallocate(ptr_);
-        }
-    }
-
-    /**
-     * @brief Release ownership
-     */
-    void* release() {
-        void* ptr = ptr_;
-        ptr_ = nullptr;
-        return ptr;
-    }
-
-    /**
-     * @brief Get pointer
-     */
-    void* get() const {
-        return ptr_;
-    }
-
-    /**
-     * @brief Check if valid
-     */
-    bool valid() const {
-        return ptr_ != nullptr;
-    }
-};
+}
 
 /**
- * @brief Convenience macro for allocating and deallocating
+ * @brief 安全内存清零
  */
-#define VDL_ALLOCATE(size) vdl::MemoryManager::allocate(size)
-#define VDL_DEALLOCATE(ptr) vdl::MemoryManager::deallocate(ptr)
+inline void mem_zero(void* dest, size_t count) {
+    mem_set(dest, 0, count);
+}
 
 /**
- * @brief Allocate with guard for exception safety
+ * @brief 内存比较
  */
-#define VDL_ALLOCATE_GUARDED(size, allocator) \
-    vdl::MemoryGuard(vdl::MemoryManager::allocate(size), allocator)
+inline int mem_compare(const void* lhs, const void* rhs, size_t count) {
+    if (!lhs || !rhs || count == 0) {
+        return 0;
+    }
+    return std::memcmp(lhs, rhs, count);
+}
 
-} // namespace vdl
+}  // namespace vdl
 
-#endif // VDL_MEMORY_HPP
+#endif  // VDL_CORE_MEMORY_HPP

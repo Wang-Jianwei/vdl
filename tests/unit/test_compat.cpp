@@ -1,32 +1,57 @@
-// Tests for C++11 compatibility layer
+/**
+ * @file test_compat.cpp
+ * @brief 测试 C++11 兼容层
+ */
+
 #include <catch.hpp>
 #include <vdl/core/compat.hpp>
 #include <vdl/core/noncopyable.hpp>
 
 #include <memory>
+#include <string>
 #include <vector>
 
-TEST_CASE("make_unique creates unique_ptr", "[compat][make_unique]") {
-    using namespace vdl;
-    
-    SECTION("basic type") {
-        auto ptr = make_unique<int>(42);
-        REQUIRE(ptr);
+// ============================================================================
+// make_unique 测试
+// ============================================================================
+
+TEST_CASE("make_unique creates unique_ptr", "[core][compat]") {
+    SECTION("simple type") {
+        auto ptr = vdl::make_unique<int>(42);
+        REQUIRE(ptr != nullptr);
         REQUIRE(*ptr == 42);
     }
-    
+
+    SECTION("string type") {
+        auto ptr = vdl::make_unique<std::string>("hello");
+        REQUIRE(ptr != nullptr);
+        REQUIRE(*ptr == "hello");
+    }
+
+    SECTION("struct with constructor") {
+        struct point_t {
+            int x, y;
+            point_t(int a, int b) : x(a), y(b) {}
+        };
+
+        auto ptr = vdl::make_unique<point_t>(10, 20);
+        REQUIRE(ptr != nullptr);
+        REQUIRE(ptr->x == 10);
+        REQUIRE(ptr->y == 20);
+    }
+
     SECTION("with multiple arguments") {
-        auto ptr = make_unique<std::pair<int, std::string>>(10, "hello");
-        REQUIRE(ptr);
+        auto ptr = vdl::make_unique<std::pair<int, std::string>>(10, "hello");
+        REQUIRE(ptr != nullptr);
         REQUIRE(ptr->first == 10);
         REQUIRE(ptr->second == "hello");
     }
     
     SECTION("vector of unique_ptr") {
         std::vector<std::unique_ptr<int>> vec;
-        vec.push_back(make_unique<int>(1));
-        vec.push_back(make_unique<int>(2));
-        vec.push_back(make_unique<int>(3));
+        vec.push_back(vdl::make_unique<int>(1));
+        vec.push_back(vdl::make_unique<int>(2));
+        vec.push_back(vdl::make_unique<int>(3));
         
         REQUIRE(vec.size() == 3);
         REQUIRE(*vec[0] == 1);
@@ -35,180 +60,148 @@ TEST_CASE("make_unique creates unique_ptr", "[compat][make_unique]") {
     }
 }
 
-TEST_CASE("enable_if_t for conditional compilation", "[compat][enable_if_t]") {
-    using namespace vdl;
+// ============================================================================
+// type_traits 测试
+// ============================================================================
+
+TEST_CASE("enable_if_t works correctly", "[core][compat]") {
+    using enable_for_int = vdl::enable_if_t<std::is_integral<int>::value, int>;
+    static_assert(std::is_same<enable_for_int, int>::value, "Should be int");
+    REQUIRE(true);
+}
+
+TEST_CASE("conditional_t works correctly", "[core][compat]") {
+    using type1 = vdl::conditional_t<true, int, double>;
+    using type2 = vdl::conditional_t<false, int, double>;
     
-    SECTION("type alias works") {
-        using result = enable_if_t<true, int>;
-        REQUIRE(std::is_same<result, int>::value);
+    static_assert(std::is_same<type1, int>::value, "Should be int");
+    static_assert(std::is_same<type2, double>::value, "Should be double");
+    REQUIRE(true);
+}
+
+TEST_CASE("remove_cvref_t removes cv and ref qualifiers", "[core][compat]") {
+    SECTION("const reference") {
+        using base = vdl::remove_cvref_t<const int&>;
+        static_assert(std::is_same<base, int>::value, "Should be int");
+        REQUIRE(true);
     }
-    
-    SECTION("conditional type") {
-        using is_int = enable_if_t<std::is_same<int, int>::value, int>;
-        REQUIRE(std::is_same<is_int, int>::value);
+
+    SECTION("volatile rvalue reference") {
+        using base2 = vdl::remove_cvref_t<volatile double&&>;
+        static_assert(std::is_same<base2, double>::value, "Should be double");
+        REQUIRE(true);
+    }
+
+    SECTION("all qualifiers") {
+        using base3 = vdl::remove_cvref_t<const volatile int&>;
+        static_assert(std::is_same<base3, int>::value, "Should be int");
+        REQUIRE(true);
     }
 }
 
-TEST_CASE("conditional_t for conditional types", "[compat][conditional_t]") {
-    using namespace vdl;
-    
-    SECTION("select first type") {
-        using result = conditional_t<true, int, double>;
-        REQUIRE(std::is_same<result, int>::value);
-    }
-    
-    SECTION("select second type") {
-        using result = conditional_t<false, int, double>;
-        REQUIRE(std::is_same<result, double>::value);
-    }
+// ============================================================================
+// void_t 测试
+// ============================================================================
+
+template <typename T, typename = void>
+struct has_size : std::false_type {};
+
+template <typename T>
+struct has_size<T, vdl::void_t<decltype(std::declval<T>().size())>> 
+    : std::true_type {};
+
+TEST_CASE("void_t enables SFINAE", "[core][compat]") {
+    static_assert(has_size<std::string>::value, "string has size()");
+    static_assert(!has_size<int>::value, "int has no size()");
+    REQUIRE(true);
 }
 
-TEST_CASE("conjunction for trait AND", "[compat][conjunction]") {
-    using namespace vdl;
+// ============================================================================
+// conjunction/disjunction 测试
+// ============================================================================
+
+TEST_CASE("conjunction works correctly", "[core][compat]") {
+    constexpr bool all_true = vdl::conjunction<
+        std::is_integral<int>,
+        std::is_integral<long>,
+        std::is_integral<short>
+    >::value;
     
-    SECTION("all true") {
-        using result = conjunction<std::true_type, std::true_type, std::true_type>;
-        REQUIRE(result::value);
-    }
+    constexpr bool not_all = vdl::conjunction<
+        std::is_integral<int>,
+        std::is_floating_point<int>
+    >::value;
     
-    SECTION("mixed true and false") {
-        using result = conjunction<std::true_type, std::false_type, std::true_type>;
-        REQUIRE(!result::value);
-    }
-    
-    SECTION("all false") {
-        using result = conjunction<std::false_type, std::false_type>;
-        REQUIRE(!result::value);
-    }
+    REQUIRE(all_true == true);
+    REQUIRE(not_all == false);
 }
 
-TEST_CASE("disjunction for trait OR", "[compat][disjunction]") {
-    using namespace vdl;
+TEST_CASE("disjunction works correctly", "[core][compat]") {
+    constexpr bool any_true = vdl::disjunction<
+        std::is_integral<double>,
+        std::is_floating_point<double>
+    >::value;
     
-    SECTION("all true") {
-        using result = disjunction<std::true_type, std::true_type>;
-        REQUIRE(result::value);
-    }
+    constexpr bool none_true = vdl::disjunction<
+        std::is_integral<double>,
+        std::is_pointer<double>
+    >::value;
     
-    SECTION("mixed true and false") {
-        using result = disjunction<std::false_type, std::true_type, std::false_type>;
-        REQUIRE(result::value);
-    }
-    
-    SECTION("all false") {
-        using result = disjunction<std::false_type, std::false_type>;
-        REQUIRE(!result::value);
-    }
+    REQUIRE(any_true == true);
+    REQUIRE(none_true == false);
 }
 
-TEST_CASE("void_t for detection idiom", "[compat][void_t]") {
-    using namespace vdl;
+TEST_CASE("negation works correctly", "[core][compat]") {
+    constexpr bool not_int = vdl::negation<std::is_integral<double>>::value;
+    constexpr bool is_int = vdl::negation<std::is_integral<int>>::value;
     
-    // Test that void_t can be used
-    using result = void_t<int, double, std::string>;
-    REQUIRE(std::is_same<result, void>::value);
+    REQUIRE(not_int == true);
+    REQUIRE(is_int == false);
 }
 
-TEST_CASE("NonCopyable prevents copying", "[compat][noncopyable]") {
-    using namespace vdl;
-    
-    class TestClass : public NonCopyable {
+// ============================================================================
+// noncopyable_t 测试
+// ============================================================================
+
+TEST_CASE("noncopyable_t prevents copying", "[core][compat]") {
+    class test_class_t : public vdl::noncopyable_t {
     public:
-        TestClass() : value(42) {}
+        test_class_t() : value(42) {}
         int value;
     };
-    
+
     SECTION("default construction works") {
-        TestClass obj;
+        test_class_t obj;
         REQUIRE(obj.value == 42);
     }
-    
+
     SECTION("copy is deleted") {
-        REQUIRE(!std::is_copy_constructible<TestClass>::value);
-        REQUIRE(!std::is_copy_assignable<TestClass>::value);
+        REQUIRE(!std::is_copy_constructible<test_class_t>::value);
+        REQUIRE(!std::is_copy_assignable<test_class_t>::value);
+    }
+
+    SECTION("move still works") {
+        REQUIRE(std::is_move_constructible<test_class_t>::value);
+        REQUIRE(std::is_move_assignable<test_class_t>::value);
     }
 }
 
-TEST_CASE("NonMovable prevents moving", "[compat][nonmovable]") {
-    using namespace vdl;
-    
-    class TestClass : public NonMovable {
+TEST_CASE("nonmovable_t prevents copying and moving", "[core][compat]") {
+    class test_class_t : public vdl::nonmovable_t {
     public:
-        TestClass() : value(42) {}
+        test_class_t() : value(42) {}
         int value;
     };
-    
+
     SECTION("default construction works") {
-        TestClass obj;
+        test_class_t obj;
         REQUIRE(obj.value == 42);
     }
-    
+
     SECTION("copy and move are deleted") {
-        REQUIRE(!std::is_copy_constructible<TestClass>::value);
-        REQUIRE(!std::is_copy_assignable<TestClass>::value);
-        REQUIRE(!std::is_move_constructible<TestClass>::value);
-        REQUIRE(!std::is_move_assignable<TestClass>::value);
-    }
-}
-
-TEST_CASE("remove_cvref_t removes cv and reference", "[compat][remove_cvref_t]") {
-    using namespace vdl;
-    
-    SECTION("remove const reference") {
-        using result = remove_cvref_t<const int&>;
-        REQUIRE(std::is_same<result, int>::value);
-    }
-    
-    SECTION("remove volatile reference") {
-        using result = remove_cvref_t<volatile int&>;
-        REQUIRE(std::is_same<result, int>::value);
-    }
-    
-    SECTION("remove rvalue reference") {
-        using result = remove_cvref_t<int&&>;
-        REQUIRE(std::is_same<result, int>::value);
-    }
-    
-    SECTION("remove all qualifiers") {
-        using result = remove_cvref_t<const volatile int&>;
-        REQUIRE(std::is_same<result, int>::value);
-    }
-}
-
-TEST_CASE("bool_constant type alias", "[compat][bool_constant]") {
-    using namespace vdl;
-    
-    SECTION("true constant") {
-        using my_true = bool_constant<true>;
-        REQUIRE(my_true::value);
-    }
-    
-    SECTION("false constant") {
-        using my_false = bool_constant<false>;
-        REQUIRE(!my_false::value);
-    }
-}
-
-// ============================================================================
-// Helper templates for detection tests
-// ============================================================================
-
-namespace {
-
-template<typename T>
-using has_size_t = decltype(std::declval<T>().size());
-
-}
-
-// ============================================================================
-// Compatibility Tests
-// ============================================================================
-
-TEST_CASE("is_detected detects valid operations", "[compat][detection]") {
-    using namespace vdl;
-    
-    SECTION("detect size method") {
-        REQUIRE(is_detected<has_size_t, std::vector<int>>::value);
-        REQUIRE(!is_detected<has_size_t, int>::value);
+        REQUIRE(!std::is_copy_constructible<test_class_t>::value);
+        REQUIRE(!std::is_copy_assignable<test_class_t>::value);
+        REQUIRE(!std::is_move_constructible<test_class_t>::value);
+        REQUIRE(!std::is_move_assignable<test_class_t>::value);
     }
 }

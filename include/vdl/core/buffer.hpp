@@ -1,503 +1,296 @@
-#ifndef VDL_BUFFER_HPP
-#define VDL_BUFFER_HPP
+/**
+ * @file buffer.hpp
+ * @brief VDL 缓冲区管理
+ * 
+ * 提供缓冲区类和相关工具函数。
+ */
 
-#include "error.hpp"
-#include "memory.hpp"
-#include "types.hpp"
-#include <cstring>
+#ifndef VDL_CORE_BUFFER_HPP
+#define VDL_CORE_BUFFER_HPP
+
+#include <vdl/core/types.hpp>
+#include <vdl/core/error.hpp>
+#include <vdl/core/noncopyable.hpp>
 #include <algorithm>
-#include <vector>
+#include <cstring>
 
 namespace vdl {
 
-/**
- * @brief Circular buffer for byte data
- */
-class CircularBuffer {
-private:
-    uint8_t* buffer_;
-    size_t capacity_;
-    size_t write_pos_;
-    size_t read_pos_;
-    size_t data_size_;
-    Allocator* allocator_;
-    bool owns_memory_;
+// ============================================================================
+// 环形缓冲区
+// ============================================================================
 
+/**
+ * @brief 环形缓冲区
+ * 
+ * 适用于流式数据的缓冲区实现。
+ */
+class ring_buffer_t : public noncopyable_t {
 public:
     /**
-     * @brief Construct with specified capacity
+     * @brief 构造指定容量的环形缓冲区
      */
-    explicit CircularBuffer(size_t capacity, Allocator* allocator = nullptr)
-        : buffer_(nullptr), capacity_(capacity), write_pos_(0), read_pos_(0),
-          data_size_(0), allocator_(allocator), owns_memory_(true) {
-        VDL_CHECK(capacity > 0, vdl::ErrorCode::Invalid, "capacity must be > 0");
-        
-        if (allocator_ == nullptr) {
-            allocator_ = MemoryManager::getDefaultAllocator();
-        }
-
-        buffer_ = static_cast<uint8_t*>(allocator_->allocate(capacity));
-        VDL_CHECK_NOT_NULL(buffer_, "failed to allocate buffer memory");
-    }
+    explicit ring_buffer_t(size_t capacity)
+        : m_buffer(capacity)
+        , m_capacity(capacity)
+        , m_read_pos(0)
+        , m_write_pos(0)
+        , m_size(0) {}
 
     /**
-     * @brief Construct with external buffer
+     * @brief 获取容量
      */
-    CircularBuffer(void* buffer, size_t capacity)
-        : buffer_(static_cast<uint8_t*>(buffer)), capacity_(capacity),
-          write_pos_(0), read_pos_(0), data_size_(0),
-          allocator_(nullptr), owns_memory_(false) {
-        VDL_CHECK_NOT_NULL(buffer, "buffer cannot be null");
-        VDL_CHECK(capacity > 0, vdl::ErrorCode::Invalid, "capacity must be > 0");
-    }
-
-    ~CircularBuffer() {
-        if (owns_memory_ && buffer_ != nullptr && allocator_ != nullptr) {
-            allocator_->deallocate(buffer_);
-        }
-    }
+    size_t capacity() const { return m_capacity; }
 
     /**
-     * @brief Write data to buffer
+     * @brief 获取当前数据大小
      */
-    size_t write(const void* data, size_t size) {
-        VDL_CHECK_NOT_NULL(data, "data pointer cannot be null");
-        
-        // Available space in buffer
-        size_t available = capacity_ - data_size_;
-        size_t to_write = std::min(size, available);
+    size_t size() const { return m_size; }
 
+    /**
+     * @brief 获取可用空间
+     */
+    size_t available() const { return m_capacity - m_size; }
+
+    /**
+     * @brief 检查是否为空
+     */
+    bool empty() const { return m_size == 0; }
+
+    /**
+     * @brief 检查是否已满
+     */
+    bool full() const { return m_size == m_capacity; }
+
+    /**
+     * @brief 写入数据
+     * 
+     * @param data 数据指针
+     * @param len 数据长度
+     * @return 实际写入的字节数
+     */
+    size_t write(const byte_t* data, size_t len) {
+        if (data == nullptr || len == 0) {
+            return 0;
+        }
+
+        size_t to_write = std::min(len, available());
         if (to_write == 0) {
-            return 0;  // Buffer full
+            return 0;
         }
 
-        const uint8_t* src = static_cast<const uint8_t*>(data);
+        // 分两段写入（如果跨越边界）
+        size_t first_part = std::min(to_write, m_capacity - m_write_pos);
+        std::memcpy(&m_buffer[m_write_pos], data, first_part);
 
-        // Write in two parts if wrapping around
-        if (write_pos_ + to_write <= capacity_) {
-            // No wrap: direct copy
-            std::memcpy(buffer_ + write_pos_, src, to_write);
-        } else {
-            // Wrap: split into two parts
-            size_t first_part = capacity_ - write_pos_;
-            std::memcpy(buffer_ + write_pos_, src, first_part);
-            std::memcpy(buffer_, src + first_part, to_write - first_part);
+        if (to_write > first_part) {
+            std::memcpy(&m_buffer[0], data + first_part, to_write - first_part);
         }
 
-        write_pos_ = (write_pos_ + to_write) % capacity_;
-        data_size_ += to_write;
+        m_write_pos = (m_write_pos + to_write) % m_capacity;
+        m_size += to_write;
 
         return to_write;
     }
 
     /**
-     * @brief Read data from buffer
+     * @brief 写入数据（span 版本）
      */
-    size_t read(void* data, size_t size) {
-        VDL_CHECK_NOT_NULL(data, "data pointer cannot be null");
-        
-        size_t to_read = std::min(size, data_size_);
+    size_t write(const_byte_span_t data) {
+        return write(data.data(), data.size());
+    }
 
+    /**
+     * @brief 读取数据
+     * 
+     * @param buffer 接收缓冲区
+     * @param len 要读取的长度
+     * @return 实际读取的字节数
+     */
+    size_t read(byte_t* buffer, size_t len) {
+        if (buffer == nullptr || len == 0) {
+            return 0;
+        }
+
+        size_t to_read = std::min(len, m_size);
         if (to_read == 0) {
-            return 0;  // Buffer empty
+            return 0;
         }
 
-        uint8_t* dst = static_cast<uint8_t*>(data);
+        // 分两段读取（如果跨越边界）
+        size_t first_part = std::min(to_read, m_capacity - m_read_pos);
+        std::memcpy(buffer, &m_buffer[m_read_pos], first_part);
 
-        // Read in two parts if wrapping around
-        if (read_pos_ + to_read <= capacity_) {
-            // No wrap: direct copy
-            std::memcpy(dst, buffer_ + read_pos_, to_read);
-        } else {
-            // Wrap: split into two parts
-            size_t first_part = capacity_ - read_pos_;
-            std::memcpy(dst, buffer_ + read_pos_, first_part);
-            std::memcpy(dst + first_part, buffer_, to_read - first_part);
+        if (to_read > first_part) {
+            std::memcpy(buffer + first_part, &m_buffer[0], to_read - first_part);
         }
 
-        read_pos_ = (read_pos_ + to_read) % capacity_;
-        data_size_ -= to_read;
+        m_read_pos = (m_read_pos + to_read) % m_capacity;
+        m_size -= to_read;
 
         return to_read;
     }
 
     /**
-     * @brief Peek data without removing from buffer
+     * @brief 读取数据（span 版本）
      */
-    size_t peek(void* data, size_t size) const {
-        VDL_CHECK_NOT_NULL(data, "data pointer cannot be null");
-        
-        size_t to_peek = std::min(size, data_size_);
+    size_t read(byte_span_t buffer) {
+        return read(buffer.data(), buffer.size());
+    }
 
+    /**
+     * @brief 预览数据（不移除）
+     */
+    size_t peek(byte_t* buffer, size_t len) const {
+        if (buffer == nullptr || len == 0) {
+            return 0;
+        }
+
+        size_t to_peek = std::min(len, m_size);
         if (to_peek == 0) {
             return 0;
         }
 
-        uint8_t* dst = static_cast<uint8_t*>(data);
+        size_t first_part = std::min(to_peek, m_capacity - m_read_pos);
+        std::memcpy(buffer, &m_buffer[m_read_pos], first_part);
 
-        if (read_pos_ + to_peek <= capacity_) {
-            std::memcpy(dst, buffer_ + read_pos_, to_peek);
-        } else {
-            size_t first_part = capacity_ - read_pos_;
-            std::memcpy(dst, buffer_ + read_pos_, first_part);
-            std::memcpy(dst + first_part, buffer_, to_peek - first_part);
+        if (to_peek > first_part) {
+            std::memcpy(buffer + first_part, &m_buffer[0], to_peek - first_part);
         }
 
         return to_peek;
     }
 
     /**
-     * @brief Clear all data from buffer
+     * @brief 跳过指定字节数
+     */
+    size_t skip(size_t len) {
+        size_t to_skip = std::min(len, m_size);
+        m_read_pos = (m_read_pos + to_skip) % m_capacity;
+        m_size -= to_skip;
+        return to_skip;
+    }
+
+    /**
+     * @brief 消费指定字节数（skip 的别名）
+     */
+    size_t consume(size_t len) {
+        return skip(len);
+    }
+
+    /**
+     * @brief 获取可读数据大小（size 的别名）
+     */
+    size_t readable_size() const { return m_size; }
+
+    /**
+     * @brief 获取可写空间大小（available 的别名）
+     */
+    size_t writable_size() const { return available(); }
+
+    /**
+     * @brief 写入单个字节
+     */
+    bool push(byte_t b) {
+        if (full()) {
+            return false;
+        }
+        m_buffer[m_write_pos] = b;
+        m_write_pos = (m_write_pos + 1) % m_capacity;
+        ++m_size;
+        return true;
+    }
+
+    /**
+     * @brief 读取单个字节
+     */
+    tl::optional<byte_t> pop() {
+        if (empty()) {
+            return tl::nullopt;
+        }
+        byte_t b = m_buffer[m_read_pos];
+        m_read_pos = (m_read_pos + 1) % m_capacity;
+        --m_size;
+        return b;
+    }
+
+    /**
+     * @brief 清空缓冲区
      */
     void clear() {
-        write_pos_ = 0;
-        read_pos_ = 0;
-        data_size_ = 0;
+        m_read_pos = 0;
+        m_write_pos = 0;
+        m_size = 0;
     }
 
-    /**
-     * @brief Skip bytes in the buffer
-     */
-    void skip(size_t count) {
-        size_t to_skip = std::min(count, data_size_);
-        read_pos_ = (read_pos_ + to_skip) % capacity_;
-        data_size_ -= to_skip;
-    }
-
-    /**
-     * @brief Get available data size
-     */
-    size_t getAvailableSize() const {
-        return data_size_;
-    }
-
-    /**
-     * @brief Get remaining capacity
-     */
-    size_t getRemainingCapacity() const {
-        return capacity_ - data_size_;
-    }
-
-    /**
-     * @brief Get total capacity
-     */
-    size_t getCapacity() const {
-        return capacity_;
-    }
-
-    /**
-     * @brief Check if buffer is empty
-     */
-    bool isEmpty() const {
-        return data_size_ == 0;
-    }
-
-    /**
-     * @brief Check if buffer is full
-     */
-    bool isFull() const {
-        return data_size_ == capacity_;
-    }
-
-    /**
-     * @brief Get write position
-     */
-    size_t getWritePos() const {
-        return write_pos_;
-    }
-
-    /**
-     * @brief Get read position
-     */
-    size_t getReadPos() const {
-        return read_pos_;
-    }
+private:
+    bytes_t m_buffer;
+    size_t m_capacity;
+    size_t m_read_pos;
+    size_t m_write_pos;
+    size_t m_size;
 };
+
+// ============================================================================
+// 静态缓冲区
+// ============================================================================
 
 /**
- * @brief Template-based ring buffer for typed data
+ * @brief 固定大小的静态缓冲区
  */
-template<typename T>
-class RingBuffer {
-private:
-    std::vector<T> buffer_;
-    size_t capacity_;
-    size_t write_pos_;
-    size_t read_pos_;
-    size_t data_count_;
-
+template<size_t N>
+class static_buffer_t {
 public:
-    /**
-     * @brief Construct with specified capacity
-     */
-    explicit RingBuffer(size_t capacity)
-        : buffer_(capacity), capacity_(capacity), write_pos_(0),
-          read_pos_(0), data_count_(0) {
-        VDL_CHECK(capacity > 0, vdl::ErrorCode::Invalid, "capacity must be > 0");
-    }
+    static_buffer_t() : m_size(0) {}
 
-    /**
-     * @brief Push element to buffer
-     */
-    bool push(const T& value) {
-        if (data_count_ >= capacity_) {
-            return false;  // Buffer full
-        }
+    byte_t* data() { return m_data; }
+    const byte_t* data() const { return m_data; }
+    size_t size() const { return m_size; }
+    size_t capacity() const { return N; }
+    bool empty() const { return m_size == 0; }
 
-        buffer_[write_pos_] = value;
-        write_pos_ = (write_pos_ + 1) % capacity_;
-        data_count_++;
+    void set_size(size_t s) { m_size = std::min(s, N); }
+    void clear() { m_size = 0; }
 
-        return true;
-    }
+    byte_t& operator[](size_t idx) { return m_data[idx]; }
+    const byte_t& operator[](size_t idx) const { return m_data[idx]; }
 
-    /**
-     * @brief Pop element from buffer
-     */
-    bool pop(T& value) {
-        if (data_count_ == 0) {
-            return false;  // Buffer empty
-        }
+    byte_span_t as_span() { return byte_span_t(m_data, m_size); }
+    const_byte_span_t as_span() const { return const_byte_span_t(m_data, m_size); }
 
-        value = buffer_[read_pos_];
-        read_pos_ = (read_pos_ + 1) % capacity_;
-        data_count_--;
-
-        return true;
-    }
-
-    /**
-     * @brief Peek front element
-     */
-    bool front(T& value) const {
-        if (data_count_ == 0) {
-            return false;
-        }
-
-        value = buffer_[read_pos_];
-        return true;
-    }
-
-    /**
-     * @brief Peek back element
-     */
-    bool back(T& value) const {
-        if (data_count_ == 0) {
-            return false;
-        }
-
-        size_t back_pos = (write_pos_ + capacity_ - 1) % capacity_;
-        value = buffer_[back_pos];
-        return true;
-    }
-
-    /**
-     * @brief Get element at index (0 = front)
-     */
-    bool at(size_t index, T& value) const {
-        if (index >= data_count_) {
-            return false;
-        }
-
-        size_t pos = (read_pos_ + index) % capacity_;
-        value = buffer_[pos];
-        return true;
-    }
-
-    /**
-     * @brief Clear all elements
-     */
-    void clear() {
-        write_pos_ = 0;
-        read_pos_ = 0;
-        data_count_ = 0;
-    }
-
-    /**
-     * @brief Get element count
-     */
-    size_t size() const {
-        return data_count_;
-    }
-
-    /**
-     * @brief Get capacity
-     */
-    size_t capacity() const {
-        return capacity_;
-    }
-
-    /**
-     * @brief Check if empty
-     */
-    bool empty() const {
-        return data_count_ == 0;
-    }
-
-    /**
-     * @brief Check if full
-     */
-    bool full() const {
-        return data_count_ == capacity_;
-    }
-
-    /**
-     * @brief Get remaining capacity
-     */
-    size_t remaining() const {
-        return capacity_ - data_count_;
-    }
+private:
+    byte_t m_data[N];
+    size_t m_size;
 };
+
+// ============================================================================
+// 辅助函数
+// ============================================================================
 
 /**
- * @brief Buffer pool for efficient allocation
+ * @brief 从字节数组创建 bytes_t
  */
-class BufferPool {
-private:
-    struct BufferNode {
-        uint8_t* data;
-        size_t size;
-        bool available;
-    };
-
-    std::vector<BufferNode> buffers_;
-    size_t buffer_size_;
-    Allocator* allocator_;
-
-public:
-    /**
-     * @brief Construct buffer pool
-     */
-    BufferPool(size_t buffer_size, size_t buffer_count, Allocator* allocator = nullptr)
-        : buffer_size_(buffer_size), allocator_(allocator) {
-        VDL_CHECK(buffer_size > 0, vdl::ErrorCode::Invalid, "buffer size must be > 0");
-        VDL_CHECK(buffer_count > 0, vdl::ErrorCode::Invalid, "buffer count must be > 0");
-
-        if (allocator_ == nullptr) {
-            allocator_ = MemoryManager::getDefaultAllocator();
-        }
-
-        buffers_.reserve(buffer_count);
-        for (size_t i = 0; i < buffer_count; ++i) {
-            BufferNode node;
-            node.data = static_cast<uint8_t*>(allocator_->allocate(buffer_size));
-            VDL_CHECK_NOT_NULL(node.data, "failed to allocate buffer");
-            node.size = buffer_size;
-            node.available = true;
-            buffers_.push_back(node);
-        }
-    }
-
-    ~BufferPool() {
-        for (auto& node : buffers_) {
-            if (node.data != nullptr && allocator_ != nullptr) {
-                allocator_->deallocate(node.data);
-            }
-        }
-    }
-
-    /**
-     * @brief Acquire a buffer
-     */
-    uint8_t* acquire() {
-        for (auto& node : buffers_) {
-            if (node.available) {
-                node.available = false;
-                return node.data;
-            }
-        }
-
-        return nullptr;  // No available buffer
-    }
-
-    /**
-     * @brief Release a buffer
-     */
-    bool release(uint8_t* buffer) {
-        if (buffer == nullptr) {
-            return false;
-        }
-
-        for (auto& node : buffers_) {
-            if (node.data == buffer && !node.available) {
-                node.available = true;
-                return true;
-            }
-        }
-
-        return false;  // Buffer not in pool
-    }
-
-    /**
-     * @brief Get buffer size
-     */
-    size_t getBufferSize() const {
-        return buffer_size_;
-    }
-
-    /**
-     * @brief Get number of available buffers
-     */
-    size_t getAvailableCount() const {
-        size_t count = 0;
-        for (const auto& node : buffers_) {
-            if (node.available) {
-                ++count;
-            }
-        }
-        return count;
-    }
-
-    /**
-     * @brief Get total buffer count
-     */
-    size_t getTotalCount() const {
-        return buffers_.size();
-    }
-
-    /**
-     * @brief Clear all buffers (mark as available)
-     */
-    void reset() {
-        for (auto& node : buffers_) {
-            node.available = true;
-        }
-    }
-};
+inline bytes_t make_bytes(const byte_t* data, size_t len) {
+    return bytes_t(data, data + len);
+}
 
 /**
- * @brief RAII buffer guard for automatic buffer release
+ * @brief 从 span 创建 bytes_t
  */
-class BufferGuard {
-private:
-    uint8_t* buffer_;
-    BufferPool* pool_;
+inline bytes_t make_bytes(const_byte_span_t span) {
+    return bytes_t(span.begin(), span.end());
+}
 
-public:
-    BufferGuard(uint8_t* buffer, BufferPool* pool)
-        : buffer_(buffer), pool_(pool) {}
-
-    ~BufferGuard() {
-        if (buffer_ != nullptr && pool_ != nullptr) {
-            pool_->release(buffer_);
-        }
+/**
+ * @brief 比较两个 span
+ */
+inline bool bytes_equal(const_byte_span_t a, const_byte_span_t b) {
+    if (a.size() != b.size()) {
+        return false;
     }
+    return std::equal(a.begin(), a.end(), b.begin());
+}
 
-    uint8_t* get() const {
-        return buffer_;
-    }
+}  // namespace vdl
 
-    uint8_t* release() {
-        uint8_t* ptr = buffer_;
-        buffer_ = nullptr;
-        return ptr;
-    }
-
-    bool valid() const {
-        return buffer_ != nullptr;
-    }
-};
-
-} // namespace vdl
-
-#endif // VDL_BUFFER_HPP
+#endif  // VDL_CORE_BUFFER_HPP

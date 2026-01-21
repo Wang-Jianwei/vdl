@@ -1,401 +1,208 @@
+/**
+ * @file test_error.cpp
+ * @brief 测试错误处理
+ */
+
 #include <catch.hpp>
 #include <vdl/core/error.hpp>
 
 // ============================================================================
-// 错误码枚举测试
+// error_code_t 测试
 // ============================================================================
 
-TEST_CASE("ErrorCode enumeration", "[error][enum]") {
-    SECTION("Error codes are distinct") {
-        REQUIRE(static_cast<int>(vdl::ErrorCode::Success) == 0);
-        REQUIRE(static_cast<int>(vdl::ErrorCode::Unknown) == 100);
-        REQUIRE(static_cast<int>(vdl::ErrorCode::OutOfMemory) == 200);
-        REQUIRE(static_cast<int>(vdl::ErrorCode::NullPointer) == 300);
-        REQUIRE(static_cast<int>(vdl::ErrorCode::IOError) == 400);
-        REQUIRE(static_cast<int>(vdl::ErrorCode::DeviceError) == 500);
-        REQUIRE(static_cast<int>(vdl::ErrorCode::Timeout) == 600);
-    }
+TEST_CASE("error_code_t values", "[core][error]") {
+    REQUIRE(static_cast<int>(vdl::error_code_t::ok) == 0);
+    REQUIRE(static_cast<int>(vdl::error_code_t::unknown) == 100);
+    REQUIRE(static_cast<int>(vdl::error_code_t::timeout) == 600);
+    REQUIRE(static_cast<int>(vdl::error_code_t::invalid_argument) == 301);
+    REQUIRE(static_cast<int>(vdl::error_code_t::invalid_frame) == 703);
+    REQUIRE(static_cast<int>(vdl::error_code_t::device_error) == 500);
 }
 
 // ============================================================================
-// VdlException 基本功能测试
+// error_category_t 测试
 // ============================================================================
 
-TEST_CASE("VdlException construction and properties", "[error][exception]") {
-    SECTION("Create exception with error code") {
-        vdl::VdlException ex(vdl::ErrorCode::Invalid, "test message");
-        REQUIRE(ex.getErrorCode() == vdl::ErrorCode::Invalid);
-        REQUIRE(ex.getMessage() == "test message");
-    }
-    
-    SECTION("Create exception with full information") {
-        vdl::VdlException ex(vdl::ErrorCode::OutOfRange, "value too large",
-                            "test_function", "test.cpp", 42);
-        REQUIRE(ex.getErrorCode() == vdl::ErrorCode::OutOfRange);
-        REQUIRE(ex.getMessage() == "value too large");
-        REQUIRE(ex.getFunction() == "test_function");
-        REQUIRE(ex.getFile() == "test.cpp");
-        REQUIRE(ex.getLine() == 42);
-    }
-    
-    SECTION("what() returns non-null string") {
-        vdl::VdlException ex(vdl::ErrorCode::NullPointer, "null");
-        REQUIRE(ex.what() != nullptr);
-        REQUIRE(std::string(ex.what()).length() > 0);
-    }
+TEST_CASE("error_category_t values", "[core][error]") {
+    REQUIRE(static_cast<int>(vdl::error_category_t::none) == 0);
+    REQUIRE(static_cast<int>(vdl::error_category_t::general) == 1);
+    REQUIRE(static_cast<int>(vdl::error_category_t::transport) == 10);
+}
+
+TEST_CASE("get_error_category", "[core][error]") {
+    REQUIRE(vdl::get_error_category(vdl::error_code_t::ok) == vdl::error_category_t::none);
+    REQUIRE(vdl::get_error_category(vdl::error_code_t::unknown) == vdl::error_category_t::general);
+    REQUIRE(vdl::get_error_category(vdl::error_code_t::out_of_memory) == vdl::error_category_t::memory);
+    REQUIRE(vdl::get_error_category(vdl::error_code_t::invalid_argument) == vdl::error_category_t::argument);
+    REQUIRE(vdl::get_error_category(vdl::error_code_t::io_error) == vdl::error_category_t::io);
+    REQUIRE(vdl::get_error_category(vdl::error_code_t::device_error) == vdl::error_category_t::device);
+    REQUIRE(vdl::get_error_category(vdl::error_code_t::timeout) == vdl::error_category_t::concurrency);
+    REQUIRE(vdl::get_error_category(vdl::error_code_t::protocol_error) == vdl::error_category_t::protocol);
+    REQUIRE(vdl::get_error_category(vdl::error_code_t::config_error) == vdl::error_category_t::config);
+    REQUIRE(vdl::get_error_category(vdl::error_code_t::invalid_state) == vdl::error_category_t::logic);
+    REQUIRE(vdl::get_error_category(vdl::error_code_t::transport_error) == vdl::error_category_t::transport);
 }
 
 // ============================================================================
-// 异常抛出和捕获测试
+// error_t 测试
 // ============================================================================
 
-TEST_CASE("Exception throwing and catching", "[error][throw_catch]") {
-    SECTION("Catch by VdlException") {
-        try {
-            throw vdl::VdlException(vdl::ErrorCode::Invalid, "test");
-        } catch (const vdl::VdlException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::Invalid);
-            REQUIRE(true);
-        } catch (...) {
-            REQUIRE(false);
-        }
-    }
+TEST_CASE("error_t default construction", "[core][error]") {
+    vdl::error_t err;
+
+    REQUIRE(err.code() == vdl::error_code_t::ok);
+    REQUIRE(err.message().empty());
+    REQUIRE(err.category() == vdl::error_category_t::none);
+    REQUIRE(err.is_ok());
+    REQUIRE_FALSE(err.is_error());
+}
+
+TEST_CASE("error_t construction with code", "[core][error]") {
+    vdl::error_t err(vdl::error_code_t::timeout);
+
+    REQUIRE(err.code() == vdl::error_code_t::timeout);
+    REQUIRE(err.is_error());
+    REQUIRE_FALSE(err.is_ok());
+}
+
+TEST_CASE("error_t construction with code and message", "[core][error]") {
+    vdl::error_t err(vdl::error_code_t::connection_failed, "Cannot connect");
+
+    REQUIRE(err.code() == vdl::error_code_t::connection_failed);
+    REQUIRE(err.message() == "Cannot connect");
+}
+
+TEST_CASE("error_t bool conversion", "[core][error]") {
+    vdl::error_t ok_err;
+    vdl::error_t bad_err(vdl::error_code_t::unknown);
+
+    // ok 返回 false (无错误)
+    REQUIRE_FALSE(static_cast<bool>(ok_err));
     
-    SECTION("Catch by std::exception") {
-        try {
-            throw vdl::VdlException(vdl::ErrorCode::OutOfMemory, "oom");
-        } catch (const std::exception& ex) {
-            REQUIRE(std::string(ex.what()).length() > 0);
-        }
-    }
+    // 有错误返回 true
+    REQUIRE(static_cast<bool>(bad_err));
+}
+
+TEST_CASE("error_t with_context", "[core][error]") {
+    vdl::error_t err(vdl::error_code_t::read_error, "Read failed");
+    err.with_context("in file A").with_context("at line 10");
+
+    REQUIRE(err.context() == "in file A <- at line 10");
+}
+
+TEST_CASE("error_t to_string", "[core][error]") {
+    vdl::error_t err(vdl::error_code_t::timeout, "Operation timed out");
+    auto str = err.to_string();
+
+    REQUIRE(str.find("timeout") != std::string::npos);
+    REQUIRE(str.find("600") != std::string::npos);
+    REQUIRE(str.find("Operation timed out") != std::string::npos);
+}
+
+TEST_CASE("get_error_name", "[core][error]") {
+    REQUIRE(std::string(vdl::get_error_name(vdl::error_code_t::ok)) == "ok");
+    REQUIRE(std::string(vdl::get_error_name(vdl::error_code_t::timeout)) == "timeout");
+    REQUIRE(std::string(vdl::get_error_name(vdl::error_code_t::device_error)) == "device_error");
 }
 
 // ============================================================================
-// 特定异常类测试
+// result_t 测试
 // ============================================================================
 
-TEST_CASE("Specific exception classes", "[error][specific]") {
-    SECTION("ArgumentException") {
-        try {
-            throw vdl::ArgumentException("invalid arg");
-        } catch (const vdl::ArgumentException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::InvalidArgument);
-        }
-    }
-    
-    SECTION("MemoryException") {
-        try {
-            throw vdl::MemoryException("out of memory");
-        } catch (const vdl::MemoryException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::OutOfMemory);
-        }
-    }
-    
-    SECTION("StateException") {
-        try {
-            throw vdl::StateException("invalid state");
-        } catch (const vdl::StateException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::InvalidState);
-        }
-    }
-    
-    SECTION("IOException") {
-        try {
-            throw vdl::IOException("read failed");
-        } catch (const vdl::IOException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::IOError);
-        }
-    }
-    
-    SECTION("DeviceException") {
-        try {
-            throw vdl::DeviceException("device error");
-        } catch (const vdl::DeviceException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::DeviceError);
-        }
-    }
-    
-    SECTION("TimeoutException") {
-        try {
-            throw vdl::TimeoutException("operation timeout");
-        } catch (const vdl::TimeoutException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::Timeout);
-        }
-    }
+TEST_CASE("result_t with value", "[core][error]") {
+    vdl::result_t<int> result = 42;
+
+    REQUIRE(result.has_value());
+    REQUIRE(*result == 42);
+}
+
+TEST_CASE("result_t with error", "[core][error]") {
+    vdl::result_t<int> result = tl::make_unexpected(
+        vdl::error_t(vdl::error_code_t::invalid_argument, "Bad arg"));
+
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error().code() == vdl::error_code_t::invalid_argument);
+    REQUIRE(result.error().message() == "Bad arg");
+}
+
+TEST_CASE("result_t<void> success", "[core][error]") {
+    vdl::result_t<void> result;
+
+    REQUIRE(result.has_value());
+}
+
+TEST_CASE("result_t<void> error", "[core][error]") {
+    vdl::result_t<void> result = tl::make_unexpected(
+        vdl::error_t(vdl::error_code_t::timeout));
+
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error().code() == vdl::error_code_t::timeout);
 }
 
 // ============================================================================
-// ErrorManager 测试
+// 工厂函数测试
 // ============================================================================
 
-TEST_CASE("ErrorManager operations", "[error][manager]") {
-    SECTION("Get error message for known error code") {
-        std::string msg = vdl::ErrorManager::getErrorMessage(vdl::ErrorCode::InvalidArgument);
-        REQUIRE(msg.length() > 0);
-        bool has_invalid = (msg.find("Invalid") != std::string::npos ||
-                            msg.find("invalid") != std::string::npos);
-        REQUIRE(has_invalid);
-    }
-    
-    SECTION("Get success message") {
-        std::string msg = vdl::ErrorManager::getErrorMessage(vdl::ErrorCode::Success);
-        REQUIRE(msg == "Success");
-    }
-    
-    SECTION("Set and get last error") {
-        vdl::ErrorManager::clearError();
-        REQUIRE(vdl::ErrorManager::getLastError() == vdl::ErrorCode::Success);
-        
-        vdl::ErrorManager::setLastError(vdl::ErrorCode::Timeout);
-        REQUIRE(vdl::ErrorManager::getLastError() == vdl::ErrorCode::Timeout);
-    }
-    
-    SECTION("Register custom error message") {
-        vdl::ErrorCode custom_code = vdl::ErrorCode::Unknown;
-        std::string custom_msg = "Custom error message";
-        
-        vdl::ErrorManager::registerErrorMessage(custom_code, custom_msg);
-        REQUIRE(vdl::ErrorManager::getErrorMessage(custom_code) == custom_msg);
-    }
+TEST_CASE("make_ok", "[core][error]") {
+    auto result = vdl::make_ok();
+
+    REQUIRE(result.has_value());
+}
+
+TEST_CASE("make_error with code", "[core][error]") {
+    auto result = vdl::make_error<int>(vdl::error_code_t::read_error);
+
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error().code() == vdl::error_code_t::read_error);
+}
+
+TEST_CASE("make_error with code and message", "[core][error]") {
+    auto result = vdl::make_error<int>(vdl::error_code_t::write_error, 
+                                        "Write operation failed");
+
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error().code() == vdl::error_code_t::write_error);
+    REQUIRE(result.error().message() == "Write operation failed");
+}
+
+TEST_CASE("make_unexpected", "[core][error]") {
+    auto unexpected = vdl::make_unexpected(vdl::error_code_t::busy, "Resource busy");
+    vdl::result_t<int> result = unexpected;
+
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error().code() == vdl::error_code_t::busy);
 }
 
 // ============================================================================
-// 错误宏测试
+// result_t 使用模式测试
 // ============================================================================
 
-TEST_CASE("Error macros", "[error][macros]") {
-    SECTION("VDL_THROW macro") {
-        try {
-            VDL_THROW(vdl::ErrorCode::Invalid, "macro test");
-        } catch (const vdl::VdlException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::Invalid);
-            REQUIRE(ex.getMessage() == "macro test");
-        }
+vdl::result_t<int> divide(int a, int b) {
+    if (b == 0) {
+        return vdl::make_error<int>(vdl::error_code_t::invalid_argument,
+                                     "Division by zero");
     }
-    
-    SECTION("VDL_THROW_ARGUMENT macro") {
-        try {
-            VDL_THROW_ARGUMENT("bad argument");
-        } catch (const vdl::ArgumentException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::InvalidArgument);
-        }
+    return a / b;
+}
+
+TEST_CASE("result_t function return value", "[core][error]") {
+    SECTION("success case") {
+        auto result = divide(10, 2);
+        REQUIRE(result.has_value());
+        REQUIRE(*result == 5);
     }
-    
-    SECTION("VDL_THROW_MEMORY macro") {
-        try {
-            VDL_THROW_MEMORY("memory error");
-        } catch (const vdl::MemoryException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::OutOfMemory);
-        }
-    }
-    
-    SECTION("VDL_THROW_STATE macro") {
-        try {
-            VDL_THROW_STATE("state error");
-        } catch (const vdl::StateException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::InvalidState);
-        }
-    }
-    
-    SECTION("VDL_SET_ERROR macro") {
-        VDL_SET_ERROR(vdl::ErrorCode::OperationFailed);
-        REQUIRE(vdl::ErrorManager::getLastError() == vdl::ErrorCode::OperationFailed);
+
+    SECTION("error case") {
+        auto result = divide(10, 0);
+        REQUIRE_FALSE(result.has_value());
+        REQUIRE(result.error().code() == vdl::error_code_t::invalid_argument);
     }
 }
 
-// ============================================================================
-// 检查宏测试
-// ============================================================================
+TEST_CASE("result_t value_or", "[core][error]") {
+    auto success = divide(10, 2);
+    auto failure = divide(10, 0);
 
-TEST_CASE("Check macros", "[error][check]") {
-    SECTION("VDL_CHECK passes on true condition") {
-        bool condition = true;
-        VDL_CHECK(condition, vdl::ErrorCode::Invalid, "should not throw");
-        REQUIRE(true);
-    }
-    
-    SECTION("VDL_CHECK throws on false condition") {
-        bool condition = false;
-        try {
-            VDL_CHECK(condition, vdl::ErrorCode::Invalid, "check failed");
-            REQUIRE(false);  // Should not reach here
-        } catch (const vdl::VdlException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::Invalid);
-        }
-    }
-    
-    SECTION("VDL_CHECK_NOT_NULL with non-null pointer") {
-        int value = 42;
-        int* ptr = &value;
-        VDL_CHECK_NOT_NULL(ptr, "pointer is valid");
-        REQUIRE(true);
-    }
-    
-    SECTION("VDL_CHECK_NOT_NULL with null pointer") {
-        int* ptr = nullptr;
-        try {
-            VDL_CHECK_NOT_NULL(ptr, "pointer is null");
-            REQUIRE(false);
-        } catch (const vdl::VdlException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::NullPointer);
-        }
-    }
-    
-    SECTION("VDL_CHECK_RANGE valid") {
-        int value = 5;
-        VDL_CHECK_RANGE(value, 0, 10, "in range");
-        REQUIRE(true);
-    }
-    
-    SECTION("VDL_CHECK_RANGE invalid") {
-        int value = 15;
-        try {
-            VDL_CHECK_RANGE(value, 0, 10, "out of range");
-            REQUIRE(false);
-        } catch (const vdl::VdlException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::OutOfRange);
-        }
-    }
-}
-
-// ============================================================================
-// 错误消息格式测试
-// ============================================================================
-
-TEST_CASE("Error message formatting", "[error][formatting]") {
-    SECTION("Full message includes error code") {
-        vdl::VdlException ex(vdl::ErrorCode::InvalidArgument, "test");
-        std::string full_msg = ex.getFullMessage();
-        bool has_code = (full_msg.find("InvalidArgument") != std::string::npos ||
-                         full_msg.find("301") != std::string::npos);
-        REQUIRE(has_code);
-    }
-    
-    SECTION("Full message includes custom message") {
-        vdl::VdlException ex(vdl::ErrorCode::Invalid, "custom message");
-        std::string full_msg = ex.getFullMessage();
-        REQUIRE(full_msg.find("custom message") != std::string::npos);
-    }
-    
-    SECTION("Full message includes location info") {
-        vdl::VdlException ex(vdl::ErrorCode::Invalid, "msg",
-                            "my_function", "my_file.cpp", 123);
-        std::string full_msg = ex.getFullMessage();
-        REQUIRE(full_msg.find("my_function") != std::string::npos);
-        REQUIRE(full_msg.find("my_file.cpp") != std::string::npos);
-        REQUIRE(full_msg.find("123") != std::string::npos);
-    }
-}
-
-// ============================================================================
-// 异常链和处理流程测试
-// ============================================================================
-
-TEST_CASE("Exception handling workflow", "[error][workflow]") {
-    SECTION("Function throws and caller handles") {
-        auto throwing_function = []() {
-            VDL_CHECK_NOT_NULL(nullptr, "validation failed");
-        };
-        
-        try {
-            throwing_function();
-            REQUIRE(false);
-        } catch (const vdl::VdlException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::NullPointer);
-        }
-    }
-    
-    SECTION("Multiple exception types") {
-        try {
-            int condition = 0;
-            if (condition == 0) {
-                VDL_THROW_STATE("invalid state");
-            }
-        } catch (const vdl::StateException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::InvalidState);
-        }
-    }
-}
-
-// ============================================================================
-// 错误恢复测试
-// ============================================================================
-
-TEST_CASE("Error recovery scenarios", "[error][recovery]") {
-    SECTION("Catch and retry") {
-        int attempts = 0;
-        bool success = false;
-        
-        for (int i = 0; i < 3; ++i) {
-            try {
-                attempts++;
-                if (attempts < 3) {
-                    VDL_THROW(vdl::ErrorCode::Timeout, "retry");
-                }
-                success = true;
-                break;
-            } catch (const vdl::VdlException& ex) {
-                // Continue trying
-            }
-        }
-        
-        REQUIRE(success);
-        REQUIRE(attempts == 3);
-    }
-    
-    SECTION("Error logging and continuation") {
-        vdl::ErrorCode last_error = vdl::ErrorCode::Success;
-        
-        try {
-            VDL_THROW(vdl::ErrorCode::OperationFailed, "operation error");
-        } catch (const vdl::VdlException& ex) {
-            last_error = ex.getErrorCode();
-            VDL_SET_ERROR(last_error);
-        }
-        
-        REQUIRE(last_error == vdl::ErrorCode::OperationFailed);
-        REQUIRE(vdl::ErrorManager::getLastError() == vdl::ErrorCode::OperationFailed);
-    }
-}
-
-// ============================================================================
-// 集成测试
-// ============================================================================
-
-TEST_CASE("Error system integration", "[error][integration]") {
-    SECTION("Complete error handling workflow") {
-        // 清除之前的错误
-        vdl::ErrorManager::clearError();
-        
-        // 模拟操作和错误处理
-        try {
-            int value = -5;
-            VDL_CHECK_RANGE(value, 0, 100, "value must be 0-100");
-        } catch (const vdl::VdlException& ex) {
-            VDL_SET_ERROR(ex.getErrorCode());
-            REQUIRE(vdl::ErrorManager::getLastError() == vdl::ErrorCode::OutOfRange);
-        }
-        
-        // 验证错误信息可用
-        std::string error_msg = vdl::ErrorManager::getErrorMessage(
-            vdl::ErrorManager::getLastError());
-        REQUIRE(error_msg.length() > 0);
-    }
-    
-    SECTION("Multiple exception types in sequence") {
-        vdl::ErrorCode final_error = vdl::ErrorCode::Success;
-        
-        try {
-            try {
-                VDL_THROW_ARGUMENT("bad arg");
-            } catch (const vdl::ArgumentException& ex) {
-                final_error = ex.getErrorCode();
-                // Re-throw as different type
-                VDL_THROW_STATE("cascading error");
-            }
-        } catch (const vdl::StateException& ex) {
-            REQUIRE(ex.getErrorCode() == vdl::ErrorCode::InvalidState);
-            REQUIRE(final_error == vdl::ErrorCode::InvalidArgument);
-        }
-    }
+    REQUIRE(success.value_or(-1) == 5);
+    REQUIRE(failure.value_or(-1) == -1);
 }

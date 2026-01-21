@@ -33,6 +33,9 @@ add_subdirectory(src)
 enable_testing()
 add_subdirectory(tests)
 
+# Examples
+add_subdirectory(examples)
+
 # ============================================================================
 # Export configuration
 # ============================================================================

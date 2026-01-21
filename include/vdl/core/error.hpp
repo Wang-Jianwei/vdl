@@ -1,18 +1,17 @@
-#pragma once
-
 /**
  * @file error.hpp
  * @brief VDL 错误处理系统
  * 
- * 提供统一的异常和错误处理机制，包括：
- * - 错误码枚举
- * - 异常类体系
- * - 错误消息映射
+ * 提供统一的错误码和错误类型定义。
  */
 
-#include <stdexcept>
+#ifndef VDL_CORE_ERROR_HPP
+#define VDL_CORE_ERROR_HPP
+
+#include <vdl/core/types.hpp>
+#include <tl/expected.hpp>
+#include <tl/optional.hpp>
 #include <string>
-#include <map>
 #include <sstream>
 
 namespace vdl {
@@ -22,384 +21,353 @@ namespace vdl {
 // ============================================================================
 
 /**
- * @brief VDL 错误码枚举
- * 
- * 定义所有可能的错误情况。
+ * @brief 错误码枚举
  */
-enum class ErrorCode {
+enum class error_code_t : int {
     // 成功
-    Success = 0,
-    
+    ok = 0,
+
     // 一般错误 (100-199)
-    Unknown = 100,                    ///< 未知错误
-    Invalid = 101,                    ///< 无效的参数或状态
-    NotSupported = 102,               ///< 不支持的操作
-    Unimplemented = 103,              ///< 功能未实现
-    
+    unknown = 100,
+    invalid = 101,
+    not_supported = 102,
+    not_implemented = 103,
+
     // 内存错误 (200-299)
-    OutOfMemory = 200,                ///< 内存不足
-    AllocationFailed = 201,           ///< 内存分配失败
-    InvalidPointer = 202,             ///< 无效的指针
-    
+    out_of_memory = 200,
+    allocation_failed = 201,
+    invalid_pointer = 202,
+
     // 参数错误 (300-399)
-    NullPointer = 300,                ///< 空指针
-    InvalidArgument = 301,            ///< 无效的参数
-    OutOfRange = 302,                 ///< 超出范围
-    InvalidSize = 303,                ///< 无效的大小
-    
+    null_pointer = 300,
+    invalid_argument = 301,
+    out_of_range = 302,
+    invalid_size = 303,
+
     // IO 错误 (400-499)
-    IOError = 400,                    ///< 输入输出错误
-    FileNotFound = 401,               ///< 文件未找到
-    FileAccessDenied = 402,           ///< 文件访问被拒绝
-    InvalidFormat = 403,              ///< 无效的格式
-    
+    io_error = 400,
+    file_not_found = 401,
+    file_access_denied = 402,
+    invalid_format = 403,
+
     // 设备错误 (500-599)
-    DeviceError = 500,                ///< 设备错误
-    DeviceNotAvailable = 501,         ///< 设备不可用
-    DeviceNotInitialized = 502,       ///< 设备未初始化
-    DeviceAlreadyOpen = 503,          ///< 设备已打开
-    
+    device_error = 500,
+    device_not_available = 501,
+    device_not_initialized = 502,
+    device_already_open = 503,
+    device_not_open = 504,
+
     // 超时和竞争 (600-699)
-    Timeout = 600,                    ///< 超时
-    Deadlock = 601,                   ///< 死锁
-    ConcurrencyError = 602,           ///< 并发错误
-    
+    timeout = 600,
+    deadlock = 601,
+    concurrency_error = 602,
+    lock_conflict = 603,
+    busy = 604,
+
     // 协议和通信 (700-799)
-    ProtocolError = 700,              ///< 协议错误
-    CommunicationError = 701,         ///< 通信错误
-    VersionMismatch = 702,            ///< 版本不匹配
-    
+    protocol_error = 700,
+    communication_error = 701,
+    version_mismatch = 702,
+    invalid_frame = 703,
+    checksum_error = 704,
+    encode_failed = 705,
+    decode_failed = 706,
+    incomplete_frame = 707,
+    frame_too_large = 708,
+
     // 配置和初始化 (800-899)
-    ConfigError = 800,                ///< 配置错误
-    InitializationFailed = 801,       ///< 初始化失败
-    NotInitialized = 802,             ///< 未初始化
-    AlreadyInitialized = 803,         ///< 已初始化
-    
+    config_error = 800,
+    initialization_failed = 801,
+    not_initialized = 802,
+    already_initialized = 803,
+
     // 业务逻辑 (900-999)
-    InvalidState = 900,               ///< 无效状态
-    OperationFailed = 901,            ///< 操作失败
-    OperationCancelled = 902,         ///< 操作取消
+    invalid_state = 900,
+    operation_failed = 901,
+    operation_cancelled = 902,
+    invalid_command = 903,
+
+    // 传输层 (1000-1099)
+    transport_error = 1000,
+    connection_failed = 1001,
+    connection_closed = 1002,
+    read_error = 1003,
+    write_error = 1004,
+    address_invalid = 1005,
+    not_connected = 1006,
+    read_failed = 1007,
+    write_failed = 1008
+};
+
+/**
+ * @brief 错误类别枚举
+ */
+enum class error_category_t {
+    none,           ///< 无错误
+    general,        ///< 一般错误
+    memory,         ///< 内存错误
+    argument,       ///< 参数错误
+    io,             ///< IO 错误
+    device,         ///< 设备错误
+    concurrency,    ///< 并发错误
+    protocol,       ///< 协议错误
+    config,         ///< 配置错误
+    logic,          ///< 业务逻辑错误
+    transport       ///< 传输层错误
 };
 
 // ============================================================================
-// 异常基类
+// 错误码工具函数
 // ============================================================================
 
 /**
- * @brief VDL 异常基类
- * 
- * 所有 VDL 异常的基类，继承自 std::exception。
+ * @brief 获取错误码对应的类别
  */
-class VdlException : public std::exception {
+inline error_category_t get_error_category(error_code_t code) {
+    int c = static_cast<int>(code);
+    if (c == 0) return error_category_t::none;
+    if (c >= 100 && c < 200) return error_category_t::general;
+    if (c >= 200 && c < 300) return error_category_t::memory;
+    if (c >= 300 && c < 400) return error_category_t::argument;
+    if (c >= 400 && c < 500) return error_category_t::io;
+    if (c >= 500 && c < 600) return error_category_t::device;
+    if (c >= 600 && c < 700) return error_category_t::concurrency;
+    if (c >= 700 && c < 800) return error_category_t::protocol;
+    if (c >= 800 && c < 900) return error_category_t::config;
+    if (c >= 900 && c < 1000) return error_category_t::logic;
+    if (c >= 1000 && c < 1100) return error_category_t::transport;
+    return error_category_t::general;
+}
+
+/**
+ * @brief 获取错误码的字符串名称
+ */
+inline const char* get_error_name(error_code_t code) {
+    switch (code) {
+        case error_code_t::ok: return "ok";
+        case error_code_t::unknown: return "unknown";
+        case error_code_t::invalid: return "invalid";
+        case error_code_t::not_supported: return "not_supported";
+        case error_code_t::not_implemented: return "not_implemented";
+        case error_code_t::out_of_memory: return "out_of_memory";
+        case error_code_t::allocation_failed: return "allocation_failed";
+        case error_code_t::invalid_pointer: return "invalid_pointer";
+        case error_code_t::null_pointer: return "null_pointer";
+        case error_code_t::invalid_argument: return "invalid_argument";
+        case error_code_t::out_of_range: return "out_of_range";
+        case error_code_t::invalid_size: return "invalid_size";
+        case error_code_t::io_error: return "io_error";
+        case error_code_t::file_not_found: return "file_not_found";
+        case error_code_t::file_access_denied: return "file_access_denied";
+        case error_code_t::invalid_format: return "invalid_format";
+        case error_code_t::device_error: return "device_error";
+        case error_code_t::device_not_available: return "device_not_available";
+        case error_code_t::device_not_initialized: return "device_not_initialized";
+        case error_code_t::device_already_open: return "device_already_open";
+        case error_code_t::device_not_open: return "device_not_open";
+        case error_code_t::timeout: return "timeout";
+        case error_code_t::deadlock: return "deadlock";
+        case error_code_t::concurrency_error: return "concurrency_error";
+        case error_code_t::lock_conflict: return "lock_conflict";
+        case error_code_t::busy: return "busy";
+        case error_code_t::protocol_error: return "protocol_error";
+        case error_code_t::communication_error: return "communication_error";
+        case error_code_t::version_mismatch: return "version_mismatch";
+        case error_code_t::invalid_frame: return "invalid_frame";
+        case error_code_t::checksum_error: return "checksum_error";
+        case error_code_t::encode_failed: return "encode_failed";
+        case error_code_t::decode_failed: return "decode_failed";
+        case error_code_t::incomplete_frame: return "incomplete_frame";
+        case error_code_t::frame_too_large: return "frame_too_large";
+        case error_code_t::config_error: return "config_error";
+        case error_code_t::initialization_failed: return "initialization_failed";
+        case error_code_t::not_initialized: return "not_initialized";
+        case error_code_t::already_initialized: return "already_initialized";
+        case error_code_t::invalid_state: return "invalid_state";
+        case error_code_t::operation_failed: return "operation_failed";
+        case error_code_t::operation_cancelled: return "operation_cancelled";
+        case error_code_t::invalid_command: return "invalid_command";
+        case error_code_t::transport_error: return "transport_error";
+        case error_code_t::connection_failed: return "connection_failed";
+        case error_code_t::connection_closed: return "connection_closed";
+        case error_code_t::read_error: return "read_error";
+        case error_code_t::write_error: return "write_error";
+        case error_code_t::address_invalid: return "address_invalid";
+        case error_code_t::not_connected: return "not_connected";
+        case error_code_t::read_failed: return "read_failed";
+        case error_code_t::write_failed: return "write_failed";
+        default: return "unknown_error";
+    }
+}
+
+// ============================================================================
+// 错误类
+// ============================================================================
+
+/**
+ * @brief 错误类
+ * 
+ * 包含错误码、消息和上下文信息。
+ */
+class error_t {
 public:
     /**
-     * @brief 构造异常
-     * 
-     * @param error_code 错误码
-     * @param message 错误消息
-     * @param function 函数名
-     * @param file 文件名
-     * @param line 行号
+     * @brief 默认构造（成功状态）
      */
-    VdlException(ErrorCode error_code,
-                 const std::string& message = "",
-                 const char* function = nullptr,
-                 const char* file = nullptr,
-                 int line = 0);
-    
+    error_t() : m_code(error_code_t::ok) {}
+
     /**
-     * @brief 虚析构函数
+     * @brief 从错误码构造
      */
-    virtual ~VdlException() noexcept = default;
-    
+    explicit error_t(error_code_t code, const std::string& message = "")
+        : m_code(code)
+        , m_message(message) {}
+
     /**
-     * @brief 获取异常消息
-     * 
-     * @return C 字符串形式的异常消息
+     * @brief 从错误码和消息构造
      */
-    const char* what() const noexcept override;
-    
+    error_t(error_code_t code, const char* message)
+        : m_code(code)
+        , m_message(message ? message : "") {}
+
+    // 访问器
+    error_code_t code() const { return m_code; }
+    error_category_t category() const { return get_error_category(m_code); }
+    const std::string& message() const { return m_message; }
+    const std::string& context() const { return m_context; }
+
     /**
-     * @brief 获取错误码
-     * 
-     * @return ErrorCode 错误码值
+     * @brief 添加上下文信息
      */
-    ErrorCode getErrorCode() const noexcept {
-        return error_code_;
+    error_t& with_context(const std::string& ctx) {
+        if (!m_context.empty()) {
+            m_context += " <- ";
+        }
+        m_context += ctx;
+        return *this;
     }
-    
+
     /**
-     * @brief 获取自定义消息
-     * 
-     * @return std::string 自定义消息
+     * @brief 检查是否为成功状态
      */
-    std::string getMessage() const noexcept {
-        return message_;
+    bool is_ok() const { return m_code == error_code_t::ok; }
+
+    /**
+     * @brief 检查是否为错误状态
+     */
+    bool is_error() const { return m_code != error_code_t::ok; }
+
+    /**
+     * @brief 转换为布尔值（true 表示有错误）
+     */
+    explicit operator bool() const { return is_error(); }
+
+    /**
+     * @brief 转换为字符串
+     */
+    std::string to_string() const {
+        std::ostringstream oss;
+        oss << get_error_name(m_code) << "(" << static_cast<int>(m_code) << ")";
+        if (!m_message.empty()) {
+            oss << ": " << m_message;
+        }
+        if (!m_context.empty()) {
+            oss << " [" << m_context << "]";
+        }
+        return oss.str();
     }
-    
-    /**
-     * @brief 获取函数名
-     * 
-     * @return std::string 函数名
-     */
-    std::string getFunction() const noexcept {
-        return function_;
+
+    // 便捷构造
+    static error_t make(error_code_t code, const std::string& msg = "") {
+        return error_t(code, msg);
     }
-    
-    /**
-     * @brief 获取文件名
-     * 
-     * @return std::string 文件名
-     */
-    std::string getFile() const noexcept {
-        return file_;
+
+    static error_t transport(error_code_t code, const std::string& msg) {
+        return error_t(code, msg);
     }
-    
-    /**
-     * @brief 获取行号
-     * 
-     * @return int 行号
-     */
-    int getLine() const noexcept {
-        return line_;
+
+    static error_t device(error_code_t code, const std::string& msg) {
+        return error_t(code, msg);
     }
-    
-    /**
-     * @brief 获取完整的错误信息（包含位置信息）
-     * 
-     * @return std::string 完整错误信息
-     */
-    std::string getFullMessage() const;
+
+    static error_t protocol(error_code_t code, const std::string& msg) {
+        return error_t(code, msg);
+    }
 
 private:
-    ErrorCode error_code_;
-    std::string message_;
-    std::string function_;
-    std::string file_;
-    int line_;
-    mutable std::string what_message_;
+    error_code_t m_code;
+    std::string m_message;
+    std::string m_context;
 };
 
 // ============================================================================
-// 特定的异常类
+// Result 类型别名
 // ============================================================================
 
 /**
- * @brief 内存异常
+ * @brief 结果类型（成功或错误）
  */
-class MemoryException : public VdlException {
-public:
-    MemoryException(const std::string& message = "",
-                   const char* function = nullptr,
-                   const char* file = nullptr,
-                   int line = 0)
-        : VdlException(ErrorCode::OutOfMemory, message, function, file, line) {}
-};
+template<typename T>
+using result_t = tl::expected<T, error_t>;
 
 /**
- * @brief 参数错误异常
+ * @brief 可选类型
  */
-class ArgumentException : public VdlException {
-public:
-    ArgumentException(const std::string& message = "",
-                     const char* function = nullptr,
-                     const char* file = nullptr,
-                     int line = 0)
-        : VdlException(ErrorCode::InvalidArgument, message, function, file, line) {}
-};
-
-/**
- * @brief 状态错误异常
- */
-class StateException : public VdlException {
-public:
-    StateException(const std::string& message = "",
-                  const char* function = nullptr,
-                  const char* file = nullptr,
-                  int line = 0)
-        : VdlException(ErrorCode::InvalidState, message, function, file, line) {}
-};
-
-/**
- * @brief IO 异常
- */
-class IOException : public VdlException {
-public:
-    IOException(const std::string& message = "",
-               const char* function = nullptr,
-               const char* file = nullptr,
-               int line = 0)
-        : VdlException(ErrorCode::IOError, message, function, file, line) {}
-};
-
-/**
- * @brief 设备异常
- */
-class DeviceException : public VdlException {
-public:
-    DeviceException(const std::string& message = "",
-                   const char* function = nullptr,
-                   const char* file = nullptr,
-                   int line = 0)
-        : VdlException(ErrorCode::DeviceError, message, function, file, line) {}
-};
-
-/**
- * @brief 超时异常
- */
-class TimeoutException : public VdlException {
-public:
-    TimeoutException(const std::string& message = "",
-                    const char* function = nullptr,
-                    const char* file = nullptr,
-                    int line = 0)
-        : VdlException(ErrorCode::Timeout, message, function, file, line) {}
-};
+template<typename T>
+using optional_t = tl::optional<T>;
 
 // ============================================================================
-// 错误管理类
+// 便捷宏
 // ============================================================================
 
 /**
- * @brief 错误管理器
- * 
- * 提供错误码到消息的映射和全局错误状态管理。
+ * @brief 创建成功结果
  */
-class ErrorManager {
-public:
-    /**
-     * @brief 获取错误代码的描述信息
-     * 
-     * @param code 错误码
-     * @return std::string 错误描述
-     */
-    static std::string getErrorMessage(ErrorCode code);
-    
-    /**
-     * @brief 注册自定义错误消息
-     * 
-     * @param code 错误码
-     * @param message 错误消息
-     */
-    static void registerErrorMessage(ErrorCode code, const std::string& message);
-    
-    /**
-     * @brief 获取最后一个错误码
-     * 
-     * @return ErrorCode 最后的错误码
-     */
-    static ErrorCode getLastError();
-    
-    /**
-     * @brief 设置最后一个错误码
-     * 
-     * @param code 错误码
-     */
-    static void setLastError(ErrorCode code);
-    
-    /**
-     * @brief 清除最后一个错误
-     */
-    static void clearError();
-    
-private:
-    static std::map<ErrorCode, std::string> error_messages_;
-    static ErrorCode last_error_;
-    
-    static void initializeErrorMessages();
-};
+template<typename T>
+inline result_t<T> make_ok(T&& value) {
+    return result_t<T>(std::forward<T>(value));
+}
 
-// ============================================================================
-// 便捷宏定义
-// ============================================================================
+inline result_t<void> make_ok() {
+    return result_t<void>();
+}
 
 /**
- * @brief 抛出 VdlException 的宏
- * 
- * 使用示例：
- *   VDL_THROW(vdl::ErrorCode::Invalid, "value out of range");
+ * @brief 创建错误结果
  */
-#define VDL_THROW(code, message) \
-    throw vdl::VdlException(code, message, __FUNCTION__, __FILE__, __LINE__)
+template<typename T>
+inline result_t<T> make_error(error_code_t code, const std::string& msg = "") {
+    return tl::make_unexpected(error_t(code, msg));
+}
 
 /**
- * @brief 抛出特定类型异常的宏
- * 
- * 使用示例：
- *   VDL_THROW_ARGUMENT("invalid parameter");
+ * @brief 创建 void 类型的错误结果
  */
-#define VDL_THROW_ARGUMENT(message) \
-    throw vdl::ArgumentException(message, __FUNCTION__, __FILE__, __LINE__)
+inline result_t<void> make_error_void(error_code_t code, const std::string& msg = "") {
+    return tl::make_unexpected(error_t(code, msg));
+}
 
 /**
- * @brief 抛出内存异常的宏
+ * @brief 从已有错误创建 void 类型的错误结果
  */
-#define VDL_THROW_MEMORY(message) \
-    throw vdl::MemoryException(message, __FUNCTION__, __FILE__, __LINE__)
+inline result_t<void> make_error_void(const error_t& err) {
+    return tl::make_unexpected(err);
+}
 
 /**
- * @brief 抛出状态异常的宏
+ * @brief 创建 unexpected 错误对象
  */
-#define VDL_THROW_STATE(message) \
-    throw vdl::StateException(message, __FUNCTION__, __FILE__, __LINE__)
+inline tl::unexpected<error_t> make_unexpected(error_code_t code, const std::string& msg = "") {
+    return tl::make_unexpected(error_t(code, msg));
+}
 
 /**
- * @brief 抛出 IO 异常的宏
+ * @brief 从已有错误创建 unexpected 错误对象
  */
-#define VDL_THROW_IO(message) \
-    throw vdl::IOException(message, __FUNCTION__, __FILE__, __LINE__)
+inline tl::unexpected<error_t> make_unexpected(const error_t& err) {
+    return tl::make_unexpected(err);
+}
 
-/**
- * @brief 抛出设备异常的宏
- */
-#define VDL_THROW_DEVICE(message) \
-    throw vdl::DeviceException(message, __FUNCTION__, __FILE__, __LINE__)
+}  // namespace vdl
 
-/**
- * @brief 抛出超时异常的宏
- */
-#define VDL_THROW_TIMEOUT(message) \
-    throw vdl::TimeoutException(message, __FUNCTION__, __FILE__, __LINE__)
-
-/**
- * @brief 设置最后的错误
- * 
- * 使用示例：
- *   VDL_SET_ERROR(vdl::ErrorCode::Invalid);
- */
-#define VDL_SET_ERROR(code) \
-    vdl::ErrorManager::setLastError(code)
-
-/**
- * @brief 获取最后的错误消息
- */
-#define VDL_GET_ERROR_MESSAGE() \
-    vdl::ErrorManager::getErrorMessage(vdl::ErrorManager::getLastError())
-
-/**
- * @brief 检查条件，如果不满足则抛出异常
- * 
- * 使用示例：
- *   VDL_CHECK(ptr != nullptr, vdl::ErrorCode::NullPointer, "pointer is null");
- */
-#define VDL_CHECK(condition, code, message) \
-    do { \
-        if (!(condition)) { \
-            VDL_THROW(code, message); \
-        } \
-    } while(0)
-
-/**
- * @brief 检查指针不为空
- */
-#define VDL_CHECK_NOT_NULL(ptr, message) \
-    VDL_CHECK((ptr) != nullptr, vdl::ErrorCode::NullPointer, message)
-
-/**
- * @brief 检查值在范围内
- */
-#define VDL_CHECK_RANGE(value, min, max, message) \
-    VDL_CHECK((value) >= (min) && (value) <= (max), \
-              vdl::ErrorCode::OutOfRange, message)
-
-} // namespace vdl
+#endif  // VDL_CORE_ERROR_HPP

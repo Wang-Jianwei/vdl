@@ -1,35 +1,36 @@
 # ============================================================================
-# VDL Library
+# VDL Library (Header-Only)
 # ============================================================================
 
-# Create library with source files
-add_library(vdl STATIC
-    logging.cpp
-    error.cpp
-)
+# 创建 INTERFACE 库（header-only）
+add_library(vdl INTERFACE)
 
 target_include_directories(vdl 
-    PUBLIC
+    INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../third_party>
         $<INSTALL_INTERFACE:include>
 )
 
-target_compile_features(vdl PUBLIC cxx_std_11)
+# 链接 tl::expected 和 tl::optional (核心依赖)
+target_link_libraries(vdl INTERFACE tl::expected tl::optional)
 
-# Link third-party libraries
-target_link_libraries(vdl PUBLIC
-    tl::expected
-    tl::optional
-    spdlog::spdlog
-    nlohmann_json::nlohmann_json
-)
+# C++11 标准
+target_compile_features(vdl INTERFACE cxx_std_11)
 
 # ============================================================================
-# Installation
+# Installation (简化版本，避免导出依赖问题)
 # ============================================================================
 
 install(TARGETS vdl
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib
-        RUNTIME DESTINATION bin
+        EXPORT vdlTargets
+        INCLUDES DESTINATION include
 )
+
+# 注意: 完整的导出需要处理 tl::expected 依赖
+# 对于开发阶段，我们暂时省略导出配置
+# install(EXPORT vdlTargets
+#         FILE vdlTargets.cmake
+#         NAMESPACE vdl::
+#         DESTINATION lib/cmake/vdl
+# )

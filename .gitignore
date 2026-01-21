@@ -1,0 +1,65 @@
+# Build directories
+build/
+cmake-build-*/
+CMakeFiles/
+*.cmake
+CMakeCache.txt
+cmake_install.cmake
+
+# Output directories
+bin/
+lib/
+dist/
+
+# Compiled objects
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.exe
+*.out
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.user
+*.pro.user
+*.kdev4
+.sublime-project
+.sublime-workspace
+*.vim
+
+# Generated files
+*.gcda
+*.gcno
+coverage.xml
+Doxyfile
+html/
+latex/
+doxygen_docs/
+
+# Test outputs
+*.gcov
+test_results.xml
+gtest_results.xml
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+
+# Misc
+.env
+.envrc
+*.log

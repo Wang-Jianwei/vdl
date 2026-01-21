@@ -1,0 +1,11 @@
+# VDL CMake configuration file
+# Defines VDL_FOUND, VDL_INCLUDE_DIRS, VDL_LIBRARIES
+
+set(VDL_VERSION @PROJECT_VERSION@)
+
+get_filename_component(VDL_CMAKE_DIR "${CMAKE_CURRENT_LIST_FILE}" PATH)
+set(VDL_INCLUDE_DIRS "${VDL_CMAKE_DIR}/../../../include")
+set(VDL_LIBRARY_DIRS "${VDL_CMAKE_DIR}/../../../lib")
+
+set(VDL_LIBRARIES vdl)
+set(VDL_FOUND TRUE)

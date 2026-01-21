@@ -6,6 +6,8 @@
 add_library(vdl STATIC
     logging.cpp
     error.cpp
+    memory.cpp
+    buffer.cpp
 )
 
 target_include_directories(vdl 

@@ -21,6 +21,8 @@ add_executable(vdl_tests
     unit/test_types.cpp
     unit/test_logging.cpp
     unit/test_error.cpp
+    unit/test_memory.cpp
+    unit/test_buffer.cpp
 )
 
 target_include_directories(vdl_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -59,6 +61,12 @@ add_test(NAME "Logging Tests" COMMAND vdl_tests "[logging]" WORKING_DIRECTORY ${
 
 # Run only error tests
 add_test(NAME "Error Tests" COMMAND vdl_tests "[error]" WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Run only memory tests
+add_test(NAME "Memory Tests" COMMAND vdl_tests "[memory]" WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Run only buffer tests
+add_test(NAME "Buffer Tests" COMMAND vdl_tests "[buffer]" WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # ============================================================================
 # Test directories

@@ -15,6 +15,8 @@
 #include "../core/logging.hpp"
 
 #include <algorithm>
+#include <thread>
+#include <chrono>
 
 namespace vdl {
 
@@ -109,23 +111,41 @@ public:
                                         "Device not connected");
         }
 
-        // 编码命令
         auto encode_result = m_codec->encode(cmd);
         if (!encode_result) {
             return make_unexpected(encode_result.error());
         }
 
-        // 发送数据
-        auto& frame = *encode_result;
+        const auto& frame = *encode_result;
         const_byte_span_t frame_span(frame.data(), frame.size());
-        auto write_result = m_transport->write_all(frame_span, timeout_ms);
-        if (!write_result) {
-            _handle_error();
-            return make_unexpected(write_result.error());
+
+        const uint8_t max_attempts = std::max<uint8_t>(1, m_config.max_retries);
+        error_t last_error{error_code_t::ok};
+
+        for (uint8_t attempt = 0; attempt < max_attempts; ++attempt) {
+            auto write_result = m_transport->write_all(frame_span, timeout_ms);
+            if (!write_result) {
+                last_error = write_result.error();
+            } else {
+                auto read_result = _read_response(timeout_ms, /*handle_error_on_fail=*/false);
+                if (read_result) {
+                    return read_result;
+                }
+                last_error = read_result.error();
+            }
+
+            const bool has_more = (attempt + 1) < max_attempts;
+            if (!has_more) {
+                break;
+            }
+
+            if (m_config.retry_delay > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(m_config.retry_delay));
+            }
         }
 
-        // 接收响应
-        return _read_response(timeout_ms);
+        _handle_error(last_error);
+        return make_unexpected(last_error);
     }
 
     // ========================================================================
@@ -157,6 +177,52 @@ public:
      */
     void set_info(const device_info_t& info) {
         m_info = info;
+    }
+
+    /**
+     * @brief 设置重连回调
+     * @param callback 回调函数，接收重连事件、当前尝试次数、最大尝试次数和错误信息
+     * 
+     * @code
+     * device.set_reconnect_callback([](reconnect_event_t event, uint8_t attempt, 
+     *                                   uint8_t max_attempts, const error_t& err) {
+     *     switch (event) {
+     *         case reconnect_event_t::started:
+     *             std::cout << "开始重连..." << std::endl;
+     *             break;
+     *         case reconnect_event_t::attempting:
+     *             std::cout << "重连尝试 " << (int)attempt << "/" << (int)max_attempts << std::endl;
+     *             break;
+     *         case reconnect_event_t::success:
+     *             std::cout << "重连成功！" << std::endl;
+     *             break;
+     *         case reconnect_event_t::failed:
+     *             std::cout << "重连失败: " << err.message() << std::endl;
+     *             break;
+     *     }
+     * });
+     * @endcode
+     */
+    void set_reconnect_callback(reconnect_callback_t callback) {
+        m_reconnect_callback = std::move(callback);
+    }
+
+    /**
+     * @brief 手动触发重连
+     * @return 成功返回 ok，失败返回错误
+     */
+    result_t<void> reconnect() {
+        if (m_state == device_state_t::connected) {
+            return make_ok();
+        }
+
+        error_t trigger_error(error_code_t::not_connected, "Manual reconnect requested");
+        _try_reconnect(trigger_error);
+
+        if (m_state == device_state_t::connected) {
+            return make_ok();
+        }
+        return make_error_void(error_code_t::connection_failed, "Reconnect failed");
     }
 
     /**
@@ -354,7 +420,8 @@ protected:
     /**
      * @brief 读取响应（私有实现）
      */
-    result_t<response_t> _read_response(milliseconds_t timeout_ms) {
+    result_t<response_t> _read_response(milliseconds_t timeout_ms,
+                                        bool handle_error_on_fail = true) {
         ring_buffer_t buffer(m_codec->max_frame_size());
         bytes_t temp(1024);
         bytes_t data_copy;  // 用于存储 peek 的数据
@@ -385,7 +452,9 @@ protected:
             byte_span_t temp_span(temp.data(), temp.size());
             auto read_result = m_transport->read(temp_span, timeout_ms);
             if (!read_result) {
-                _handle_error();
+                if (handle_error_on_fail) {
+                    _handle_error(read_result.error());
+                }
                 return make_unexpected(read_result.error());
             }
 
@@ -406,12 +475,125 @@ protected:
 
     /**
      * @brief 处理错误（私有实现）
+     * @param error 触发错误
      */
-    void _handle_error() {
-        if (m_config.auto_reconnect) {
-            m_state = device_state_t::error;
-        } else {
+    void _handle_error(const error_t& error) {
+        // 判断是否需要自动重连
+        if (!m_config.auto_reconnect) {
             disconnect();
+            return;
+        }
+
+        // 判断错误类型是否可恢复
+        if (!_is_recoverable_error(error)) {
+            VDL_LOG_WARN("Non-recoverable error, disconnecting: %s", error.message().c_str());
+            disconnect();
+            return;
+        }
+
+        _try_reconnect(error);
+    }
+
+    /**
+     * @brief 判断错误是否可恢复（值得重连）
+     */
+    bool _is_recoverable_error(const error_t& error) const {
+        switch (error.code()) {
+            // 传输层瞬时错误 - 可恢复
+            case error_code_t::read_failed:
+            case error_code_t::write_failed:
+            case error_code_t::connection_closed:
+            case error_code_t::not_connected:
+            case error_code_t::io_error:
+                return true;
+
+            // 超时 - 根据配置决定
+            case error_code_t::timeout:
+                return m_config.reconnect_on_timeout;
+
+            // 协议错误、参数错误等 - 不可恢复
+            case error_code_t::protocol_error:
+            case error_code_t::invalid_frame:
+            case error_code_t::checksum_error:
+            case error_code_t::encode_failed:
+            case error_code_t::decode_failed:
+            case error_code_t::invalid_argument:
+            case error_code_t::device_error:
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * @brief 尝试重连（带退避策略）
+     */
+    void _try_reconnect(const error_t& trigger_error) {
+        m_state = device_state_t::reconnecting;
+
+        const uint8_t max_attempts = std::max<uint8_t>(1, m_config.max_retries);
+        milliseconds_t current_delay = m_config.reconnect_delay;
+
+        // 通知开始重连
+        _trigger_reconnect_callback(reconnect_event_t::started, 0, max_attempts, trigger_error);
+        VDL_LOG_INFO("Starting auto-reconnect (max %u attempts)", max_attempts);
+
+        for (uint8_t attempt = 0; attempt < max_attempts; ++attempt) {
+            // 通知正在尝试
+            _trigger_reconnect_callback(reconnect_event_t::attempting, attempt + 1, max_attempts, trigger_error);
+
+            // 关闭当前连接
+            if (m_transport->is_open()) {
+                m_transport->close();
+            }
+
+            // 尝试重新打开
+            auto open_result = m_transport->open();
+            if (open_result) {
+                m_state = device_state_t::connected;
+                VDL_LOG_INFO("Auto-reconnect succeeded on attempt %u", attempt + 1);
+                _trigger_reconnect_callback(reconnect_event_t::success, attempt + 1, max_attempts, 
+                                           error_t(error_code_t::ok, "Reconnected"));
+                return;
+            }
+
+            // 检查是否还有更多尝试
+            const bool has_more = (attempt + 1) < max_attempts;
+            if (!has_more) {
+                break;
+            }
+
+            // 等待（使用退避策略）
+            if (current_delay > 0) {
+                VDL_LOG_DEBUG("Reconnect attempt %u failed, waiting %u ms before retry",
+                             attempt + 1, static_cast<unsigned>(current_delay));
+                std::this_thread::sleep_for(std::chrono::milliseconds(current_delay));
+            }
+
+            // 计算下一次延迟（指数退避）
+            milliseconds_t next_delay = static_cast<milliseconds_t>(
+                static_cast<float>(current_delay) * m_config.backoff_multiplier);
+            current_delay = std::min(next_delay, m_config.max_reconnect_delay);
+        }
+
+        // 所有尝试都失败
+        m_state = device_state_t::error;
+        VDL_LOG_ERROR("Auto-reconnect failed after %u attempts", max_attempts);
+        _trigger_reconnect_callback(reconnect_event_t::failed, max_attempts, max_attempts, trigger_error);
+    }
+
+    /**
+     * @brief 触发重连回调
+     */
+    void _trigger_reconnect_callback(reconnect_event_t event,
+                                     uint8_t attempt,
+                                     uint8_t max_attempts,
+                                     const error_t& error) {
+        if (m_reconnect_callback) {
+            try {
+                m_reconnect_callback(event, attempt, max_attempts, error);
+            } catch (const std::exception& e) {
+                VDL_LOG_WARN("Reconnect callback threw exception: %s", e.what());
+            }
         }
     }
 
@@ -421,6 +603,7 @@ protected:
     device_state_t m_state;
     device_info_t m_info;
     device_config_t m_config;
+    reconnect_callback_t m_reconnect_callback;
 };
 
 }  // namespace vdl

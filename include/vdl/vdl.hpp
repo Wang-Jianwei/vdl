@@ -74,6 +74,17 @@
 // #include "device/scpi_adapter.hpp"  // 在使用示例中直接包含
 
 // ============================================================================
+// 心跳模块
+// ============================================================================
+
+#include "heartbeat/heartbeat_config.hpp"
+#include "heartbeat/heartbeat_strategy.hpp"
+#include "heartbeat/heartbeat_runner.hpp"
+#include "heartbeat/strategies/ping_heartbeat.hpp"
+#include "heartbeat/strategies/echo_heartbeat.hpp"
+#include "heartbeat/strategies/scpi_heartbeat.hpp"
+
+// ============================================================================
 // 版本信息
 // ============================================================================
 

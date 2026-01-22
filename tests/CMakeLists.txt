@@ -27,6 +27,7 @@ add_executable(vdl_tests
     unit/test_command.cpp
     unit/test_response.cpp
     unit/test_device.cpp
+    unit/test_heartbeat.cpp
 )
 
 target_include_directories(vdl_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -53,6 +54,9 @@ add_test(NAME "Codec Tests" COMMAND vdl_tests "[codec]" WORKING_DIRECTORY ${CMAK
 
 # Run only device tests
 add_test(NAME "Device Tests" COMMAND vdl_tests "[device]" WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Run only heartbeat tests
+add_test(NAME "Heartbeat Tests" COMMAND vdl_tests "[heartbeat]" WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # ============================================================================
 # Test directories

@@ -18,12 +18,14 @@ TEST_CASE("device_state_t values", "[device]") {
     REQUIRE(static_cast<uint8_t>(vdl::device_state_t::disconnected) == 0);
     REQUIRE(static_cast<uint8_t>(vdl::device_state_t::connecting) == 1);
     REQUIRE(static_cast<uint8_t>(vdl::device_state_t::connected) == 2);
-    REQUIRE(static_cast<uint8_t>(vdl::device_state_t::error) == 3);
+    REQUIRE(static_cast<uint8_t>(vdl::device_state_t::reconnecting) == 3);
+    REQUIRE(static_cast<uint8_t>(vdl::device_state_t::error) == 4);
 }
 
 TEST_CASE("device_state_name", "[device]") {
     REQUIRE(std::string(vdl::device_state_name(vdl::device_state_t::disconnected)) == "disconnected");
     REQUIRE(std::string(vdl::device_state_name(vdl::device_state_t::connected)) == "connected");
+    REQUIRE(std::string(vdl::device_state_name(vdl::device_state_t::reconnecting)) == "reconnecting");
 }
 
 // ============================================================================
@@ -225,4 +227,244 @@ TEST_CASE("make_device_guard factory function", "[device][guard]") {
     }
 
     REQUIRE_FALSE(device.is_connected());
+}
+
+// ============================================================================
+// 重试机制测试
+// ============================================================================
+
+TEST_CASE("device_impl retries on write failure", "[device][retry]") {
+    auto transport = vdl::make_unique<vdl::mock_transport_t>();
+    transport->set_fail_write_times(1);  // 第一次写失败，第二次成功
+    auto codec = vdl::make_unique<vdl::binary_codec_t>();
+
+    vdl::device_impl_t device(std::move(transport), std::move(codec));
+
+    vdl::device_config_t cfg;
+    cfg.max_retries = 2;
+    cfg.retry_delay = 0;  // 测试中不等待
+    device.set_config(cfg);
+
+    REQUIRE(device.connect().has_value());
+
+    vdl::command_t cmd;
+    cmd.set_function_code(0x03);
+    cmd.set_data({0x01, 0x02});
+
+    // 预置响应帧（使用同一编码作为回环）
+    vdl::binary_codec_t codec_helper;
+    auto frame = codec_helper.encode(cmd);
+    REQUIRE(frame.has_value());
+    device.transport()->flush_read();
+    static_cast<vdl::mock_transport_t*>(device.transport())->set_response(*frame);
+
+    auto result = device.execute(cmd);
+    REQUIRE(result.has_value());
+    REQUIRE(result->function_code() == cmd.function_code());
+}
+
+TEST_CASE("device_impl retries on read failure", "[device][retry]") {
+    auto transport = vdl::make_unique<vdl::mock_transport_t>();
+    transport->set_fail_read_times(1);  // 第一次读失败
+    auto codec = vdl::make_unique<vdl::binary_codec_t>();
+
+    vdl::device_impl_t device(std::move(transport), std::move(codec));
+
+    vdl::device_config_t cfg;
+    cfg.max_retries = 2;
+    cfg.retry_delay = 0;
+    device.set_config(cfg);
+
+    REQUIRE(device.connect().has_value());
+
+    vdl::command_t cmd;
+    cmd.set_function_code(0x02);
+    cmd.set_data({0x0A});
+
+    vdl::binary_codec_t codec_helper;
+    auto frame = codec_helper.encode(cmd);
+    REQUIRE(frame.has_value());
+    static_cast<vdl::mock_transport_t*>(device.transport())->set_response(*frame);
+
+    auto result = device.execute(cmd);
+    REQUIRE(result.has_value());
+    REQUIRE(result->function_code() == cmd.function_code());
+}
+
+TEST_CASE("device_impl gives up after max retries", "[device][retry]") {
+    auto transport = vdl::make_unique<vdl::mock_transport_t>();
+    transport->set_fail_write_times(3);  // 超过重试次数
+    auto codec = vdl::make_unique<vdl::binary_codec_t>();
+
+    vdl::device_impl_t device(std::move(transport), std::move(codec));
+
+    vdl::device_config_t cfg;
+    cfg.max_retries = 2;
+    cfg.retry_delay = 0;
+    device.set_config(cfg);
+
+    REQUIRE(device.connect().has_value());
+
+    vdl::command_t cmd;
+    cmd.set_function_code(0x05);
+
+    auto result = device.execute(cmd);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error().code() == vdl::error_code_t::write_failed);
+}
+
+// ============================================================================
+// 自动重连机制测试
+// ============================================================================
+
+TEST_CASE("device_impl auto-reconnect restores connection", "[device][reconnect]") {
+    auto transport = vdl::make_unique<vdl::mock_transport_t>();
+    auto* transport_ptr = transport.get();
+    auto codec = vdl::make_unique<vdl::binary_codec_t>();
+
+    vdl::device_impl_t device(std::move(transport), std::move(codec));
+
+    vdl::device_config_t cfg;
+    cfg.max_retries = 2;
+    cfg.retry_delay = 0;
+    device.set_config(cfg);
+
+    REQUIRE(device.connect().has_value());
+    REQUIRE(transport_ptr->open_count() == 1u);
+
+    // 强制写入失败以触发自动重连
+    transport_ptr->set_fail_write_times(2);
+
+    vdl::command_t cmd;
+    cmd.set_function_code(0x06);
+
+    auto result = device.execute(cmd);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error().code() == vdl::error_code_t::write_failed);
+
+    // 自动重连应已完成，保持连接状态
+    REQUIRE(device.is_connected());
+    REQUIRE(device.state() == vdl::device_state_t::connected);
+    REQUIRE(transport_ptr->open_count() == 2u);  // 1 次连接 + 1 次重连
+}
+
+TEST_CASE("device_impl auto-reconnect stops after failures", "[device][reconnect]") {
+    auto transport = vdl::make_unique<vdl::mock_transport_t>();
+    auto* transport_ptr = transport.get();
+    auto codec = vdl::make_unique<vdl::binary_codec_t>();
+
+    vdl::device_impl_t device(std::move(transport), std::move(codec));
+
+    vdl::device_config_t cfg;
+    cfg.max_retries = 2;
+    cfg.retry_delay = 0;
+    cfg.reconnect_delay = 0;
+    device.set_config(cfg);
+
+    REQUIRE(device.connect().has_value());
+    REQUIRE(transport_ptr->open_count() == 1u);
+
+    // 写入失败触发错误，随后打开也会连续失败
+    transport_ptr->set_fail_write_times(cfg.max_retries);
+    transport_ptr->set_fail_open_times(cfg.max_retries);
+
+    vdl::command_t cmd;
+    cmd.set_function_code(0x07);
+
+    auto result = device.execute(cmd);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error().code() == vdl::error_code_t::write_failed);
+
+    REQUIRE_FALSE(device.is_connected());
+    REQUIRE(device.state() == vdl::device_state_t::error);
+    REQUIRE(transport_ptr->open_count() == static_cast<uint32_t>(1 + cfg.max_retries));
+}
+
+TEST_CASE("device_impl reconnect callback is invoked", "[device][reconnect]") {
+    auto transport = vdl::make_unique<vdl::mock_transport_t>();
+    auto* transport_ptr = transport.get();
+    auto codec = vdl::make_unique<vdl::binary_codec_t>();
+
+    vdl::device_impl_t device(std::move(transport), std::move(codec));
+
+    vdl::device_config_t cfg;
+    cfg.max_retries = 2;
+    cfg.retry_delay = 0;
+    cfg.reconnect_delay = 0;
+    device.set_config(cfg);
+
+    // 记录回调事件
+    std::vector<vdl::reconnect_event_t> events;
+    device.set_reconnect_callback([&events](vdl::reconnect_event_t event, 
+                                             uint8_t /*attempt*/, 
+                                             uint8_t /*max_attempts*/,
+                                             const vdl::error_t& /*error*/) {
+        events.push_back(event);
+    });
+
+    REQUIRE(device.connect().has_value());
+
+    // 写入失败后会触发重连
+    transport_ptr->set_fail_write_times(cfg.max_retries);
+
+    vdl::command_t cmd;
+    cmd.set_function_code(0x08);
+
+    auto result = device.execute(cmd);
+    REQUIRE_FALSE(result.has_value());
+
+    // 应该有: started, attempting(x2), success
+    REQUIRE(events.size() >= 3);
+    REQUIRE(events[0] == vdl::reconnect_event_t::started);
+    REQUIRE(events[1] == vdl::reconnect_event_t::attempting);
+    REQUIRE(events.back() == vdl::reconnect_event_t::success);
+}
+
+TEST_CASE("device_impl does not reconnect on protocol error", "[device][reconnect]") {
+    auto transport = vdl::make_unique<vdl::mock_transport_t>();
+    auto* transport_ptr = transport.get();
+    auto codec = vdl::make_unique<vdl::binary_codec_t>();
+
+    vdl::device_impl_t device(std::move(transport), std::move(codec));
+
+    vdl::device_config_t cfg;
+    cfg.max_retries = 2;
+    cfg.retry_delay = 0;
+    cfg.reconnect_delay = 0;
+    device.set_config(cfg);
+
+    REQUIRE(device.connect().has_value());
+    uint32_t initial_open_count = transport_ptr->open_count();
+
+    // 设置无效响应（会导致协议解析错误而非传输错误）
+    transport_ptr->set_response({0xFF, 0xFF});  // 无效帧
+
+    vdl::command_t cmd;
+    cmd.set_function_code(0x09);
+
+    auto result = device.execute(cmd);
+    // 协议错误不应触发重连
+    REQUIRE(transport_ptr->open_count() == initial_open_count);
+}
+
+TEST_CASE("device_impl manual reconnect", "[device][reconnect]") {
+    auto transport = vdl::make_unique<vdl::mock_transport_t>();
+    auto* transport_ptr = transport.get();
+    auto codec = vdl::make_unique<vdl::binary_codec_t>();
+
+    vdl::device_impl_t device(std::move(transport), std::move(codec));
+
+    vdl::device_config_t cfg;
+    cfg.max_retries = 2;
+    cfg.reconnect_delay = 0;
+    device.set_config(cfg);
+
+    REQUIRE(device.connect().has_value());
+    device.disconnect();
+    REQUIRE_FALSE(device.is_connected());
+
+    auto reconnect_result = device.reconnect();
+    REQUIRE(reconnect_result.has_value());
+    REQUIRE(device.is_connected());
+    REQUIRE(transport_ptr->open_count() == 2u);
 }

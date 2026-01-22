@@ -42,7 +42,7 @@ constexpr size_t MIN_FRAME_SIZE = 6;  ///< 最小帧大小
 inline uint16_t crc16(const byte_t* data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; ++i) {
-        crc ^= (static_cast<uint16_t>(data[i]) << 8);
+        crc ^= static_cast<uint16_t>(static_cast<uint16_t>(data[i]) << 8);
         for (int j = 0; j < 8; ++j) {
             if (crc & 0x8000) {
                 crc = static_cast<uint16_t>((crc << 1) ^ 0x1021);

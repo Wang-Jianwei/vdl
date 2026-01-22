@@ -42,12 +42,12 @@ constexpr size_t MIN_FRAME_SIZE = 6;  ///< 最小帧大小
 inline uint16_t crc16(const byte_t* data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; ++i) {
-        crc ^= static_cast<uint16_t>(data[i]) << 8;
+        crc ^= (static_cast<uint16_t>(data[i]) << 8);
         for (int j = 0; j < 8; ++j) {
             if (crc & 0x8000) {
-                crc = (crc << 1) ^ 0x1021;
+                crc = static_cast<uint16_t>((crc << 1) ^ 0x1021);
             } else {
-                crc <<= 1;
+                crc = static_cast<uint16_t>(crc << 1);
             }
         }
     }
@@ -140,8 +140,8 @@ public:
         }
 
         // 读取长度
-        uint16_t data_len = static_cast<uint16_t>(buffer[1]) |
-                           (static_cast<uint16_t>(buffer[2]) << 8);
+        uint16_t data_len = static_cast<uint16_t>(static_cast<uint16_t>(buffer[1]) |
+                           (static_cast<uint16_t>(buffer[2]) << 8));
 
         size_t frame_len = binary_frame::HEADER_SIZE + data_len + 
                           binary_frame::CRC_SIZE;
@@ -162,8 +162,8 @@ public:
         // 验证 CRC
         uint16_t expected_crc = binary_frame::crc16(buffer.data(), 
                                                      frame_len - 2);
-        uint16_t actual_crc = static_cast<uint16_t>(buffer[frame_len - 2]) |
-                             (static_cast<uint16_t>(buffer[frame_len - 1]) << 8);
+        uint16_t actual_crc = static_cast<uint16_t>(static_cast<uint16_t>(buffer[frame_len - 2]) |
+                             (static_cast<uint16_t>(buffer[frame_len - 1]) << 8));
 
         if (expected_crc != actual_crc) {
             consumed = 1;
@@ -202,8 +202,8 @@ public:
             return 0;
         }
 
-        uint16_t data_len = static_cast<uint16_t>(buffer[1]) |
-                           (static_cast<uint16_t>(buffer[2]) << 8);
+        uint16_t data_len = static_cast<uint16_t>(static_cast<uint16_t>(buffer[1]) |
+                           (static_cast<uint16_t>(buffer[2]) << 8));
 
         size_t frame_len = binary_frame::HEADER_SIZE + data_len + 
                           binary_frame::CRC_SIZE;

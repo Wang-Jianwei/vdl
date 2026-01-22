@@ -71,6 +71,7 @@
 #include "device/device.hpp"
 #include "device/device_impl.hpp"
 #include "device/device_guard.hpp"
+// #include "device/scpi_adapter.hpp"  // 在使用示例中直接包含
 
 // ============================================================================
 // 版本信息

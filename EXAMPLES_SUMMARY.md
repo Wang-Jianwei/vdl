@@ -2,7 +2,7 @@
 
 ## 概述
 
-VDL 库现在包含 5 个完整的使用示例，展示了库的各种功能和最佳实践。所有示例都使用 C++11 标准编写，并能在 GCC、Clang、MinGW 和 MSVC 上编译。
+VDL 库现在包含 6 个完整的使用示例，展示了库的各种功能和最佳实践。所有示例都使用 C++11 标准编写，并能在 GCC、Clang、MinGW 和 MSVC 上编译。
 
 ## 项目结构
 
@@ -13,8 +13,11 @@ examples/
 ├── 03_buffer_operations.cpp        # 缓冲区操作示例
 ├── 04_codec_and_protocol.cpp       # 编解码和协议示例
 ├── 05_complete_communication.cpp   # 完整通信流程示例
+├── 06_vna_scpi_communication.cpp   # VNA SCPI 通信示例
 ├── CMakeLists.txt                  # CMake 配置
-└── README.md                       # 详细编译和使用指南
+├── README.md                       # 详细编译和使用指南
+├── VNA_SCPI_GUIDE.md              # VNA SCPI 使用指南
+└── test_vna.sh                     # VNA 快速测试脚本
 ```
 
 ## 示例详情
@@ -126,6 +129,50 @@ g++ -std=c++11 04_codec_and_protocol.cpp -I../include -I../third_party -o exampl
 g++ -std=c++11 05_complete_communication.cpp -I../include -I../third_party -o example_complete
 ```
 
+### 6. 06_vna_scpi_communication.cpp (650 行)
+
+**主要内容:**
+- 自定义 TCP 传输层实现
+- SCPI 协议编解码器实现
+- VNA 设备连接和识别
+- 频率范围设置和查询
+- 扫描参数配置
+- S 参数测量
+- 错误队列检查
+
+**关键演示:**
+- 创建 `tcp_transport_t` 支持网络连接
+- 创建 `scpi_codec_t` 处理文本命令
+- 使用 `make_scpi_command()` 辅助函数
+- 实现基于换行符的帧边界检测
+- 跨平台 socket 编程（Linux/Windows）
+- 完整的 VNA 测试流程
+
+**SCPI 命令示例:**
+- `*IDN?` - 设备识别
+- `SENS:FREQ:STAR 1E9` - 设置起始频率
+- `SENS:SWE:POIN 201` - 设置扫描点数
+- `CALC:DATA? FDAT` - 读取测量数据
+- `SYST:ERR?` - 查询错误
+
+**编译:**
+```bash
+# Linux/macOS
+g++ -std=c++11 06_vna_scpi_communication.cpp -I../include -I../third_party -o vna_scpi_example
+
+# Windows (MinGW)
+g++ -std=c++11 06_vna_scpi_communication.cpp -I../include -I../third_party -lws2_32 -o vna_scpi_example.exe
+```
+
+**运行:**
+```bash
+./vna_scpi_example 192.168.1.100 5025
+```
+
+**完整文档:** 参见 [VNA_SCPI_GUIDE.md](examples/VNA_SCPI_GUIDE.md)
+
+---
+
 ## 编译方式
 
 ### 使用 CMake（推荐）
@@ -169,6 +216,7 @@ done
 ./bin/03_buffer_operations # 缓冲区操作
 ./bin/04_codec_and_protocol # 编解码
 ./bin/05_complete_communication # 完整通信
+./bin/06_vna_scpi_communication # VNA SCPI 通信
 ```
 
 或在 examples 目录中直接运行编译后的可执行文件：
@@ -180,6 +228,7 @@ cd examples
 ./03_buffer_operations
 ./04_codec_and_protocol
 ./05_complete_communication
+./06_vna_scpi_communication 192.168.1.100 5025  # 需要指定 VNA IP
 ```
 
 ## 关键学习点
@@ -256,7 +305,8 @@ A: 为 Device 添加线程同步机制（示例中未覆盖）
 | 03_buffer_operations.cpp | 274 | 8.1 KB |
 | 04_codec_and_protocol.cpp | 315 | 9.3 KB |
 | 05_complete_communication.cpp | 310 | 9.2 KB |
-| **总计** | **1,279** | **37.6 KB** |
+| 06_vna_scpi_communication.cpp | 650 | 25.2 KB |
+| **总计** | **1,929** | **62.8 KB** |
 
 ## 相关文档
 

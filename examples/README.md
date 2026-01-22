@@ -9,6 +9,7 @@
 - `03_buffer_operations.cpp` - 缓冲区操作示例
 - `04_codec_and_protocol.cpp` - 编解码和协议示例
 - `05_complete_communication.cpp` - 完整通信流程示例
+- `06_vna_scpi_communication.cpp` - VNA 设备 SCPI 通信示例
 
 ## 编译方法
 
@@ -263,6 +264,62 @@ mingw32-g++ -std=c++11 01_basic_usage.cpp -I../include -o example.exe
 3. **多线程** - 添加线程安全的命令发送
 4. **循环测试** - 在循环中执行命令
 5. **性能测试** - 测量吞吐量和延迟
+
+### 06_vna_scpi_communication.cpp - VNA 设备 SCPI 通信
+
+本示例展示如何使用 VDL 库通过 TCP/IP 与 VNA 设备进行 SCPI 通信。
+
+**功能特性:**
+- 自定义 TCP 传输层实现
+- SCPI 协议编解码器
+- VNA 设备连接和识别
+- 频率设置和查询
+- 扫描参数配置
+- S 参数测量
+- 错误处理和检查
+
+**编译:**
+```bash
+# Linux/macOS
+g++ -std=c++11 06_vna_scpi_communication.cpp -I../include -I../third_party -o vna_scpi_example
+
+# Windows (MinGW)
+g++ -std=c++11 06_vna_scpi_communication.cpp -I../include -I../third_party -lws2_32 -o vna_scpi_example.exe
+```
+
+**运行:**
+```bash
+# 使用默认 IP 和端口 (192.168.1.100:5025)
+./vna_scpi_example
+
+# 指定 VNA IP 地址和端口
+./vna_scpi_example 192.168.1.100 5025
+```
+
+**示例包含的测试场景:**
+1. 设备识别查询 (*IDN?)
+2. 频率范围设置 (起始/终止频率)
+3. 扫描参数配置 (点数、带宽)
+4. S 参数测量
+5. 错误队列检查
+
+**SCPI 命令示例:**
+```cpp
+// 识别查询
+auto cmd = make_scpi_command("*IDN?");
+
+// 设置频率
+auto cmd = make_scpi_command("SENS:FREQ:STAR 1E9");
+
+// 查询数据
+auto cmd = make_scpi_command("CALC:DATA? FDAT");
+```
+
+**注意事项:**
+- 确保 VNA 设备已开启 SCPI 远程控制功能
+- 默认 SCPI 端口通常是 5025
+- 根据实际设备调整 IP 地址
+- 某些 VNA 可能需要特定的命令语法，请参考设备手册
 
 ## 示例输出
 

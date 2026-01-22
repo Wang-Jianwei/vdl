@@ -16,6 +16,7 @@
 
 #include <memory>
 #include <string>
+#include <functional>
 
 namespace vdl {
 
@@ -30,7 +31,8 @@ enum class device_state_t : uint8_t {
     disconnected = 0,   ///< 未连接
     connecting = 1,     ///< 连接中
     connected = 2,      ///< 已连接
-    error = 3           ///< 错误状态
+    reconnecting = 3,   ///< 重连中
+    error = 4           ///< 错误状态
 };
 
 /**
@@ -41,6 +43,7 @@ inline const char* device_state_name(device_state_t state) {
         case device_state_t::disconnected: return "disconnected";
         case device_state_t::connecting:   return "connecting";
         case device_state_t::connected:    return "connected";
+        case device_state_t::reconnecting: return "reconnecting";
         case device_state_t::error:        return "error";
         default: return "unknown";
     }
@@ -66,13 +69,41 @@ struct device_info_t {
 // ============================================================================
 
 /**
+ * @brief 重连事件类型
+ */
+enum class reconnect_event_t : uint8_t {
+    started = 0,      ///< 开始重连
+    attempting = 1,   ///< 正在尝试（每次重试）
+    success = 2,      ///< 重连成功
+    failed = 3        ///< 重连失败（已用尽重试次数）
+};
+
+/**
+ * @brief 重连回调类型
+ * @param event 重连事件
+ * @param attempt 当前尝试次数（从1开始）
+ * @param max_attempts 最大尝试次数
+ * @param error 错误信息（仅在 failed 时有效）
+ */
+using reconnect_callback_t = std::function<void(reconnect_event_t event,
+                                                 uint8_t attempt,
+                                                 uint8_t max_attempts,
+                                                 const error_t& error)>;
+
+/**
  * @brief 设备配置
  */
 struct device_config_t {
     milliseconds_t command_timeout = 1000;  ///< 命令超时
-    milliseconds_t retry_delay = 100;       ///< 重试延迟
+    milliseconds_t retry_delay = 100;       ///< 重试延迟（首次）
     uint8_t max_retries = 3;                ///< 最大重试次数
     bool auto_reconnect = true;             ///< 自动重连
+    
+    // 重连高级配置
+    milliseconds_t reconnect_delay = 500;   ///< 重连延迟（首次）
+    milliseconds_t max_reconnect_delay = 5000; ///< 最大重连延迟（退避上限）
+    float backoff_multiplier = 2.0f;        ///< 退避倍数
+    bool reconnect_on_timeout = false;      ///< 超时是否触发重连
 };
 
 // ============================================================================

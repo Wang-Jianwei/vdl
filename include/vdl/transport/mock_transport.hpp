@@ -40,6 +40,14 @@ public:
     // ========================================================================
 
     result_t<void> open() override {
+        ++m_open_count;
+
+        if (m_fail_open_times > 0) {
+            --m_fail_open_times;
+            return make_error_void(error_code_t::connection_failed,
+                                   "Mock: simulated transient open failure");
+        }
+
         if (m_should_fail_open) {
             return make_error_void(error_code_t::connection_failed, 
                                    "Mock: simulated open failure");
@@ -63,6 +71,12 @@ public:
                                       "Mock: not connected");
         }
         
+        if (m_fail_read_times > 0) {
+            --m_fail_read_times;
+            return make_error<size_t>(error_code_t::read_failed,
+                                      "Mock: simulated transient read failure");
+        }
+
         if (m_should_fail_read) {
             return make_error<size_t>(error_code_t::read_failed,
                                       "Mock: simulated read failure");
@@ -85,6 +99,12 @@ public:
         if (!m_is_open) {
             return make_error<size_t>(error_code_t::not_connected,
                                       "Mock: not connected");
+        }
+
+        if (m_fail_write_times > 0) {
+            --m_fail_write_times;
+            return make_error<size_t>(error_code_t::write_failed,
+                                      "Mock: simulated transient write failure");
         }
 
         if (m_should_fail_write) {
@@ -147,10 +167,31 @@ public:
     }
 
     /**
+     * @brief 设置打开失败的次数（用于模拟瞬时失败）
+     */
+    void set_fail_open_times(uint32_t times) {
+        m_fail_open_times = times;
+    }
+
+    /**
+     * @brief 获取 open 调用次数
+     */
+    uint32_t open_count() const {
+        return m_open_count;
+    }
+
+    /**
      * @brief 设置读取时是否失败
      */
     void set_fail_read(bool fail) {
         m_should_fail_read = fail;
+    }
+
+    /**
+     * @brief 设置读取失败的次数（用于模拟瞬时失败）
+     */
+    void set_fail_read_times(uint32_t times) {
+        m_fail_read_times = times;
     }
 
     /**
@@ -160,11 +201,24 @@ public:
         m_should_fail_write = fail;
     }
 
+    /**
+     * @brief 设置写入失败的次数（用于模拟瞬时失败）
+     */
+    void set_fail_write_times(uint32_t times) {
+        m_fail_write_times = times;
+    }
+
 private:
     bool m_is_open = false;
     bool m_should_fail_open = false;
     bool m_should_fail_read = false;
     bool m_should_fail_write = false;
+
+    uint32_t m_open_count = 0;
+    uint32_t m_fail_open_times = 0;
+
+    uint32_t m_fail_read_times = 0;
+    uint32_t m_fail_write_times = 0;
 
     ring_buffer_t m_read_buffer{4096};
     bytes_t m_write_buffer;

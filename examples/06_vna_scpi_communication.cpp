@@ -22,7 +22,9 @@
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
-    #pragma comment(lib, "ws2_32.lib")
+    #ifdef _MSC_VER
+        #pragma comment(lib, "ws2_32.lib")
+    #endif
     typedef int socklen_t;
 #else
     #include <sys/socket.h>
@@ -513,6 +515,7 @@ void example_vna_s_parameters(const std::string& host, uint16_t port) {
     device.disconnect();
     std::cout << "\n✓ 完成\n";
 }
+
 /**
  * @brief 示例5: 错误检查
  */

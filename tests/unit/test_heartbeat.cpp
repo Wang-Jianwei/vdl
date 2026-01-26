@@ -72,6 +72,7 @@ TEST_CASE("ping_heartbeat_t validate_response failure", "[heartbeat]") {
     vdl::ping_heartbeat_t ping;
 
     vdl::response_t resp;
+    resp.set_status(vdl::response_status_t::error);
     resp.set_error_code(0xFF);
 
     REQUIRE(ping.validate_response(resp) == false);
@@ -203,9 +204,19 @@ TEST_CASE("heartbeat_runner_t creation", "[heartbeat]") {
 
 TEST_CASE("heartbeat_runner_t start and stop", "[heartbeat]") {
     auto transport = vdl::make_unique<vdl::mock_transport_t>();
+    auto* transport_ptr = transport.get();
     auto codec = vdl::make_unique<vdl::binary_codec_t>();
     vdl::device_impl_t device(std::move(transport), std::move(codec));
     device.connect();
+
+    // 启用自动响应（心跳会多次读取）
+    vdl::command_t ping_cmd;
+    ping_cmd.set_function_code(0x00);
+    vdl::binary_codec_t codec_helper;
+    auto frame = codec_helper.encode(ping_cmd);
+    if (frame) {
+        transport_ptr->enable_auto_response(*frame);
+    }
 
     auto strategy = vdl::make_unique<vdl::ping_heartbeat_t>();
     vdl::heartbeat_config_t config;
@@ -225,9 +236,19 @@ TEST_CASE("heartbeat_runner_t start and stop", "[heartbeat]") {
 
 TEST_CASE("heartbeat_runner_t pause and resume", "[heartbeat]") {
     auto transport = vdl::make_unique<vdl::mock_transport_t>();
+    auto* transport_ptr = transport.get();
     auto codec = vdl::make_unique<vdl::binary_codec_t>();
     vdl::device_impl_t device(std::move(transport), std::move(codec));
     device.connect();
+
+    // 启用自动响应
+    vdl::command_t ping_cmd;
+    ping_cmd.set_function_code(0x00);
+    vdl::binary_codec_t codec_helper;
+    auto frame = codec_helper.encode(ping_cmd);
+    if (frame) {
+        transport_ptr->enable_auto_response(*frame);
+    }
 
     auto strategy = vdl::make_unique<vdl::ping_heartbeat_t>();
     vdl::heartbeat_config_t config;
@@ -249,9 +270,19 @@ TEST_CASE("heartbeat_runner_t pause and resume", "[heartbeat]") {
 
 TEST_CASE("heartbeat_runner_t counters", "[heartbeat]") {
     auto transport = vdl::make_unique<vdl::mock_transport_t>();
+    auto* transport_ptr = transport.get();
     auto codec = vdl::make_unique<vdl::binary_codec_t>();
     vdl::device_impl_t device(std::move(transport), std::move(codec));
     device.connect();
+
+    // 启用自动响应（心跳会多次执行）
+    vdl::command_t ping_cmd;
+    ping_cmd.set_function_code(0x00);
+    vdl::binary_codec_t codec_helper;
+    auto frame = codec_helper.encode(ping_cmd);
+    if (frame) {
+        transport_ptr->enable_auto_response(*frame);
+    }
 
     auto strategy = vdl::make_unique<vdl::ping_heartbeat_t>();
     vdl::heartbeat_config_t config;

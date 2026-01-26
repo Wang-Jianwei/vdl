@@ -1,4 +1,4 @@
-# 虚拟设备层 VDL 设计方案 v3
+# 虚拟设备层 VDL 设计方案 v3 （Vibe Coding）
 
 ## 一、设计理念
 
@@ -1306,14 +1306,3 @@ enum class error_category_t {
 ## 十六、许可证
 
 MIT License
-
----
-
-## 十七、贡献
-
-欢迎提交 Issue 和 Pull Request。
-
----
-
-*VDL v3 - Virtual Device Layer*
-*分离业务与 I/O，让设备访问更简单*

@@ -17,4 +17,9 @@ foreach(SOURCE ${EXAMPLE_SOURCES})
     
     # 链接 VDL 库
     target_link_libraries(${BASENAME} PRIVATE vdl)
+    
+    # Windows 特定的库链接
+    if(WIN32)
+        target_link_libraries(${BASENAME} PRIVATE ws2_32)
+    endif()
 endforeach()

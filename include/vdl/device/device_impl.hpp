@@ -134,7 +134,7 @@ public:
                 last_error = read_result.error();
             }
 
-            const bool has_more = (attempt + 1) < max_attempts;
+            const bool has_more = (static_cast<uint8_t>(attempt + 1)) < max_attempts;
             if (!has_more) {
                 break;
             }
@@ -539,7 +539,7 @@ protected:
 
         for (uint8_t attempt = 0; attempt < max_attempts; ++attempt) {
             // 通知正在尝试
-            _trigger_reconnect_callback(reconnect_event_t::attempting, attempt + 1, max_attempts, trigger_error);
+            _trigger_reconnect_callback(reconnect_event_t::attempting, static_cast<uint8_t>(attempt + 1), max_attempts, trigger_error);
 
             // 关闭当前连接
             if (m_transport->is_open()) {
@@ -550,14 +550,14 @@ protected:
             auto open_result = m_transport->open();
             if (open_result) {
                 m_state = device_state_t::connected;
-                VDL_LOG_INFO("Auto-reconnect succeeded on attempt %u", attempt + 1);
-                _trigger_reconnect_callback(reconnect_event_t::success, attempt + 1, max_attempts, 
+                VDL_LOG_INFO("Auto-reconnect succeeded on attempt %u", static_cast<unsigned>(attempt + 1));
+                _trigger_reconnect_callback(reconnect_event_t::success, static_cast<uint8_t>(attempt + 1), max_attempts, 
                                            error_t(error_code_t::ok, "Reconnected"));
                 return;
             }
 
             // 检查是否还有更多尝试
-            const bool has_more = (attempt + 1) < max_attempts;
+            const bool has_more = (static_cast<uint8_t>(attempt + 1)) < max_attempts;
             if (!has_more) {
                 break;
             }
@@ -565,7 +565,7 @@ protected:
             // 等待（使用退避策略）
             if (current_delay > 0) {
                 VDL_LOG_DEBUG("Reconnect attempt %u failed, waiting %u ms before retry",
-                             attempt + 1, static_cast<unsigned>(current_delay));
+                             static_cast<unsigned>(attempt + 1), static_cast<unsigned>(current_delay));
                 std::this_thread::sleep_for(std::chrono::milliseconds(current_delay));
             }
 

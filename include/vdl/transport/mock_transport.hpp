@@ -83,8 +83,13 @@ public:
         }
 
         if (m_read_buffer.empty()) {
-            return make_error<size_t>(error_code_t::timeout,
-                                      "Mock: no data available");
+            // 如果启用了自动响应，自动补充
+            if (m_auto_respond && !m_auto_response.empty()) {
+                m_read_buffer.write(m_auto_response.data(), m_auto_response.size());
+            } else {
+                return make_error<size_t>(error_code_t::timeout,
+                                          "Mock: no data available");
+            }
         }
 
         // 从读缓冲区复制数据
@@ -208,6 +213,25 @@ public:
         m_fail_write_times = times;
     }
 
+    /**
+     * @brief 启用自动响应（每次读取后自动补充响应数据）
+     * @param response 自动响应的数据
+     * 
+     * 用于测试需要多次读取相同响应的场景，例如心跳测试。
+     */
+    void enable_auto_response(const bytes_t& response) {
+        m_auto_respond = true;
+        m_auto_response = response;
+    }
+
+    /**
+     * @brief 禁用自动响应
+     */
+    void disable_auto_response() {
+        m_auto_respond = false;
+        m_auto_response.clear();
+    }
+
 private:
     bool m_is_open = false;
     bool m_should_fail_open = false;
@@ -222,6 +246,10 @@ private:
 
     ring_buffer_t m_read_buffer{4096};
     bytes_t m_write_buffer;
+    
+    // 自动响应功能
+    bool m_auto_respond = false;
+    bytes_t m_auto_response;
 };
 
 }  // namespace vdl

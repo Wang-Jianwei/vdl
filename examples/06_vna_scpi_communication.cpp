@@ -146,10 +146,14 @@ public:
         FD_SET(m_socket, &read_fds);
 
         struct timeval tv;
-        tv.tv_sec = timeout_ms / 1000;
-        tv.tv_usec = (timeout_ms % 1000) * 1000;
+        tv.tv_sec = static_cast<long>(timeout_ms / 1000);
+        tv.tv_usec = static_cast<long>((timeout_ms % 1000) * 1000);
 
-        int ret = select(m_socket + 1, &read_fds, NULL, NULL, &tv);
+#ifdef _WIN32
+        int ret = select(0, &read_fds, NULL, NULL, &tv);  // Windows 忽略第一个参数
+#else
+        int ret = select(m_socket + 1, &read_fds, NULL, NULL, &tv);  // Linux/Unix
+#endif
         if (ret == 0) {
             return make_error<size_t>(error_code_t::timeout);
         } else if (ret < 0) {
@@ -157,7 +161,11 @@ public:
         }
 
         // 读取数据
+#ifdef _WIN32
+        ssize_t n = recv(m_socket, reinterpret_cast<char*>(buffer.data()), static_cast<int>(buffer.size()), 0);
+#else
         ssize_t n = recv(m_socket, reinterpret_cast<char*>(buffer.data()), buffer.size(), 0);
+#endif
         if (n < 0) {
             return make_error<size_t>(error_code_t::io_error);
         } else if (n == 0) {
@@ -173,7 +181,11 @@ public:
             return make_error<size_t>(error_code_t::not_connected);
         }
 
+#ifdef _WIN32
+        ssize_t n = send(m_socket, reinterpret_cast<const char*>(data.data()), static_cast<int>(data.size()), 0);
+#else
         ssize_t n = send(m_socket, reinterpret_cast<const char*>(data.data()), data.size(), 0);
+#endif
         if (n < 0) {
             return make_error<size_t>(error_code_t::io_error);
         }
